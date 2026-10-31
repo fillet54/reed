@@ -1,0 +1,108 @@
+<icd>
+  <namespace alias="example">http://example.com/schema</namespace>
+  <fieldDefs>
+    <group id="header">
+      <integer name="id" bitCount="16" />
+      <integer name="key" bitCount="16" />
+    </group>
+    <group id="systemIdRef" xsi:type="systemIdRef" bitCount="21">
+      <system name="vehicle" value="1">
+        <subsystem name="computer" value="1">
+          <unit name="left" value="1"></unit>
+          <unit name="center" value="1"></unit>
+          <unit name="right" value="1"></unit>
+        </subsystem>
+      </system>
+      <system name="fuel" value="10">
+        <subsystem name="tanks" value="1">
+          <unit name="left" value="1"></unit>
+          <unit name="right" value="2"></unit>
+        </subsystem>
+
+        <subsystem name="valves" value="5">
+          <unit name="vent" value="1"></unit>
+          <unit name="fill" value="2"></unit>
+        </subsystem>
+      </system>
+    </group>
+  </fieldDefs>
+  
+  <message name="command">
+    <group name="header" ref="header"></group>
+    <union name="commandBody" discrimField="../header/id">
+      <command name="power" discrimValue="1">
+        <group name="systemId" ref="systemIdRef"></group>
+        <integer name="mode" bitCount="1">
+          <namedValues restrict="true">
+            <namedValue name="ON" value="1" />
+            <namedValue name="OFF" value="0" />
+          </namedValues>
+        </integer>
+        <spare bitCount="10" />
+       </command>
+      <command name="ibit" discrimValue="2">
+        <group name="systemId" ref="systemIdRef"></group>
+       </command>
+      <command name="changeFrequency" discrimValue="21">
+        <scalar name="freq" bitCount="16" scale="1000" offet="2500">
+          <label>Frequency</label>
+          <description>Frequency with scaling</description>
+        </scalar>
+       </command>
+    </union>
+  </message>
+
+  <message name="return">
+    <group name="header" ref="header"></group>
+    <union name="returnBody" discrimField="../header/id">
+      <return name="status" discrimValue="1">
+        <group name="systemId" ref="systemIdRef"></group>
+        <union discrimField="../systemId">
+          <system name="vehicle" value="1">
+            <group name="summaryStatus">
+              <integer name="aliveCount" bitCount="16"></integer>
+            </group>
+            <subsystem name="computer" value="1">
+              <unit name="left" value="1">
+                <group name="info">
+                  <integer name="version" bitCount="16"></integer>
+                </group>
+              </unit>
+              <unit name="center" value="1">
+                <group name="info">
+                  <integer name="version" bitCount="16"></integer>
+                </group>
+              </unit>
+              <unit name="right" value="1">
+                <group name="info">
+                  <integer name="version" bitCount="16"></integer>
+                </group>
+              </unit>
+            </subsystem>
+          </system>
+          <system name="fuel" value="10">
+            <group name="summaryStatus">
+              <integer name="totalFuel" bitCount="16"></integer>
+              <integer name="valveOpenCount" bitCount="16"></integer>
+            </group>
+            <subsystem name="tanks" value="1">
+              <group name="info">
+                <integer name="leakAmount" bitCount="16"></integer>
+              </group>
+            </subsystem>
+          </system>
+        </union>
+      </return>
+      <return name="event" discrimValue="2">
+        <group name="systemId" ref="systemIdRef"></group>
+        <integer name="set" bitCount="1">
+          <namedValues>
+            <namedValue name="SET" value="1" />
+            <namedValue name="CLEAR" value="0" />
+          </namedValues>
+        </integer>
+        <integer name="code" bitCount="15"></integer>
+      </return>
+    </union>
+  </message>
+</icd>

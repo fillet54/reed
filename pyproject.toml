@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reed"
+version = "0.1.0"
+description = "XML ICD definitions to a normalized message model: codecs, tables and message expansion"
+readme = "Readme.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+docs = ["docutils>=0.20", "sphinx>=7.3"]
+test = ["pytest>=8"]
+
+[tool.setuptools]
+packages = ["reed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
