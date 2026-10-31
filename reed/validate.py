@@ -75,9 +75,9 @@ class Context:
     def message_size(self, choose: Mapping[int, Case] | None = None) -> Size:
         return Sizer(self.icds, choose).message(self.message)
 
-    def resolve(self, path: str, from_parent: bool = False) -> Frame | None:
-        """Resolve relative to this node, or (for counts) to its parent."""
-        return resolve(path, self.stack[:-1] if from_parent else self.stack)
+    def resolve(self, path: str) -> Frame | None:
+        """Resolve a path relative to this node: ".." is its parent."""
+        return resolve(path, self.stack)
 
     def once(self, *key) -> bool:
         """True the first time `key` is seen in this validation run."""
@@ -167,7 +167,7 @@ def declared_bit_count(node, ctx):
 
 @rule(Union)
 def discriminator(node, ctx):
-    yield from _check_path(ctx, node.discrim, "discrimField", from_parent=False)
+    yield from _check_path(ctx, node.discrim, "discrimField")
 
 
 @rule(Union)
@@ -185,7 +185,7 @@ def duplicate_case_values(node, ctx):
 
 @rule(Array)
 def count_field(node, ctx):
-    target = yield from _check_path(ctx, node.count, "countValue", from_parent=True)
+    target = yield from _check_path(ctx, node.count, "countValue")
     if target is not None and not isinstance(target.node, Int):
         yield ctx.error("count-not-integer", f"countValue {node.count!r} is not an integer field")
 
@@ -214,9 +214,9 @@ def duplicate_domain_values(node, ctx):
     yield from check(node.domain, ())
 
 
-def _check_path(ctx: Context, path: str, attr: str, from_parent: bool):
+def _check_path(ctx: Context, path: str, attr: str):
     """Yield issues for a path that doesn't resolve or comes too late; return its frame."""
-    target = ctx.resolve(path, from_parent=from_parent)
+    target = ctx.resolve(path)
     if target is None:
         yield ctx.error("unresolved-path", f"{attr} {path!r} does not name a field")
         return None

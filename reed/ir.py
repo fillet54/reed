@@ -127,7 +127,7 @@ class Union:
 @dataclass(frozen=True, slots=True)
 class Array:
     name: str
-    count: Path  # countValue: field holding the element count
+    count: Path  # countValue, relative to the array like discrimField: "../n" is a sibling
     element: Struct
     meta: Meta = field(default_factory=Meta)
 

@@ -91,7 +91,7 @@ def test_choosing_a_case_fixes_the_union():
 
 ARRAY = (
     '<integer name="n" bitCount="4"/>'
-    '<group name="items" countValue="n"><integer name="v" bitCount="8"/></group>'
+    '<group name="items" countValue="../n"><integer name="v" bitCount="8"/></group>'
 )
 
 
@@ -106,7 +106,7 @@ def test_array_count_range_uses_restricted_named_values():
         '<integer name="n" bitCount="4"><namedValues restrict="true">'
         '<namedValue name="ONE" value="1"/><namedValue name="THREE" value="3"/>'
         "</namedValues></integer>"
-        '<group name="items" countValue="n"><integer name="v" bitCount="8"/></group>'
+        '<group name="items" countValue="../n"><integer name="v" bitCount="8"/></group>'
     )
 
     assert (size.lo, size.hi) == (4 + 8, 4 + 24)
@@ -115,7 +115,7 @@ def test_array_count_range_uses_restricted_named_values():
 def test_array_count_can_be_in_an_enclosing_group():
     size = message_size(
         '<group name="hdr"><integer name="n" bitCount="2"/></group>'
-        '<group name="body"><group name="items" countValue="../hdr/n">'
+        '<group name="body"><group name="items" countValue="../../hdr/n">'
         '<spare bitCount="8"/></group></group>'
     )
 

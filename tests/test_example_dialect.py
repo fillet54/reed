@@ -103,10 +103,10 @@ def test_group2_can_ref_a_field_def():
 
 def test_group2_with_count_value_becomes_array():
     (field,) = lower_fields(
-        '<group2 name="items" countValue="n"><integer name="v" bitCount="8"/></group2>'
+        '<group2 name="items" countValue="../n"><integer name="v" bitCount="8"/></group2>'
     )
 
-    assert field == Array("items", "n", Struct("items", (Int("v", 8),)))
+    assert field == Array("items", "../n", Struct("items", (Int("v", 8),)))
 
 
 def test_group2_can_be_a_field_def():

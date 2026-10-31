@@ -43,7 +43,7 @@ def test_variable_bit_count_that_varies_is_fine():
         issues(
             '<integer name="n" bitCount="2"/>'
             '<group name="g" bitCount="variable">'
-            '<group name="items" countValue="../n"><spare bitCount="8"/></group></group>'
+            '<group name="items" countValue="../../n"><spare bitCount="8"/></group></group>'
         )
         == []
     )
@@ -59,7 +59,7 @@ def test_message_over_max_size_is_an_error():
 def test_message_that_may_exceed_max_size_is_a_warning():
     assert issues(
         '<integer name="n" bitCount="16"/>'
-        '<group name="items" countValue="n"><spare bitCount="8"/></group>'
+        '<group name="items" countValue="../n"><spare bitCount="8"/></group>'
     ) == [("warning", "message-may-exceed", "m")]
 
 
@@ -107,16 +107,24 @@ def test_unresolved_count_is_an_error():
     )
 
 
+def test_count_resolves_from_the_array_like_discrim_field():
+    # Without "../", "n" would have to be inside the array itself.
+    assert issues(
+        '<integer name="n" bitCount="4"/>'
+        '<group name="items" countValue="n"><spare bitCount="8"/></group>'
+    ) == [("error", "unresolved-path", "m/items")]
+
+
 def test_count_must_be_an_integer():
     assert issues(
         '<group name="n"><spare bitCount="4"/></group>'
-        '<group name="items" countValue="n"><spare bitCount="8"/></group>'
+        '<group name="items" countValue="../n"><spare bitCount="8"/></group>'
     ) == [("error", "count-not-integer", "m/items")]
 
 
 def test_count_after_its_array_is_an_error():
     assert issues(
-        '<group name="items" countValue="n"><spare bitCount="8"/></group>'
+        '<group name="items" countValue="../n"><spare bitCount="8"/></group>'
         '<integer name="n" bitCount="4"/>'
     ) == [("error", "used-before-defined", "m/items")]
 

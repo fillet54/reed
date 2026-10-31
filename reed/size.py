@@ -127,7 +127,7 @@ class Sizer:
         (element_frame,) = children(stack[-1])
         element = self.size(push(stack, element_frame))
 
-        count_frame = resolve(node.count, stack[:-1])
+        count_frame = resolve(node.count, stack)
         bounds = count_range(count_frame.node) if count_frame else None
         if bounds is None:
             return UNBOUNDED

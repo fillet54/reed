@@ -39,6 +39,9 @@ XML ──parse──▶ DOM ──lower──▶ IR ──link/validate──�
 - The alias exists for convenience and documentation. Refs may use it (`ref="example:header"` resolves locally). An earlier binary ⇄ XML tool for this format used it as the element prefix in instance documents (`<example:command>`) instead of an `xmlns` declaration, so a future instance converter should do the same.
 - **Imports (not done yet):** `schemaLocation` elements at the top of a file will import other files and give each an alias, so a fieldDef or message from another file can be used (`ref="payload:header"`). They add entries to the lowering's alias table; the shared `Catalog` already holds the other loaded ICDs and detects fieldDef cycles across them.
 
+### Paths
+`discrimField` and `countValue` resolve the same way: relative to the node that carries them. `..` is its parent, so a sibling field is `../n`. A union case is a level of its own: from a field inside a case, `..` is the case and `../..` the union. IR nodes have no parent pointers, so tools walk with a stack of the current node's parents (`reed/paths.py`).
+
 ### Sizes
 - `bitCount="<n>"` becomes `declared_bits`, which validation checks. `bitCount="variable"` becomes `VARIABLE` and is only a hint; the real size is computed.
 - Size analysis produces `Size(lo, hi, linear)`:
