@@ -70,6 +70,7 @@ class Scaled:
     bits: int
     scale: float = 1.0
     offset: float = 0.0
+    signed: bool = False  # raw bits are two's complement
     meta: Meta = field(default_factory=Meta)
 
 
@@ -140,6 +141,11 @@ class Message:
     key: tuple[str, ...]  # ("command",) or after expansion ("command", "power", "fuel")
     body: Struct
     consts: tuple[tuple[Path, int], ...] = ()  # fields fixed by expansion
+
+    @property
+    def name(self) -> str:
+        """The XML message name; `key` adds the expanded variant after it."""
+        return self.key[0]
 
 
 @dataclass(frozen=True, slots=True)
