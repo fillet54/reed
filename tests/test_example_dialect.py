@@ -1,8 +1,10 @@
 """The example dialect: systemIdRef and unions keyed by system ID."""
 
+import pytest
+
 from reed.dialects.example import ExampleLowering
-from reed.ir import Case, Domain, Int, Meta, Struct, Union
-from reed.lower import lower_string
+from reed.ir import Array, Case, Domain, Int, Meta, Spare, Struct, Union
+from reed.lower import LoweringError, lower_string
 
 SYSTEM_ID_DEF = """
 <group id="systemIdRef" xsi:type="systemIdRef" bitCount="21">
@@ -79,3 +81,43 @@ def test_example_dialect_still_lowers_plain_command_unions():
     )
 
     assert union.cases == (Case("power", "command", 1, Struct("power", ())),)
+
+
+# --- group2: the example dialect's alias for group --------------------------
+
+
+def test_group2_lowers_like_group():
+    (field,) = lower_fields(
+        '<group2 name="g" bitCount="8"><integer name="a" bitCount="8"/></group2>'
+    )
+
+    assert field == Struct("g", (Int("a", 8),), declared_bits=8)
+
+
+def test_group2_can_ref_a_field_def():
+    (field,) = lower_fields('<group2 name="systemId" ref="systemIdRef"/>')
+
+    assert field.meta.origin == ("", "systemIdRef")
+
+
+def test_group2_with_count_value_becomes_array():
+    (field,) = lower_fields(
+        '<group2 name="items" countValue="n"><integer name="v" bitCount="8"/></group2>'
+    )
+
+    assert field == Array("items", "n", Struct("items", (Int("v", 8),)))
+
+
+def test_group2_can_be_a_field_def():
+    icd = lower_string(
+        '<icd><fieldDefs><group2 id="pair"><spare bitCount="2"/></group2></fieldDefs>'
+        '<message name="m"><group name="p" ref="pair"/></message></icd>',
+        lowering=ExampleLowering,
+    )
+
+    assert icd.messages[0].body.fields[0].fields == (Spare(2),)
+
+
+def test_group2_is_not_part_of_the_base_lowering():
+    with pytest.raises(LoweringError, match="unknown element <group2>"):
+        lower_string('<icd><message name="m"><group2 name="g"/></message></icd>')

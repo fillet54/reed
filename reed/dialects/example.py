@@ -17,6 +17,9 @@ LEVEL_BITS = 7
 
 
 class ExampleLowering(Lowering):
+    # <group2> means exactly the same as <group> in this dialect.
+    lower_group2 = Lowering.lower_group
+
     def lower_type_systemIdRef(self, elem: ET.Element) -> Struct:
         return Struct(
             elem.get("name") or elem.get("id") or "",
