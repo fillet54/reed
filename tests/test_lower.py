@@ -17,7 +17,7 @@ from reed.ir import (
     Struct,
     Union,
 )
-from reed.lower import LoweringError, lower_string
+from reed.lower import Lowering, LoweringError, lower_many, lower_string
 
 
 def lower_fields(xml: str, defs: str = "", extra: str = ""):
@@ -223,7 +223,7 @@ def test_field_def_ref_is_inlined_with_use_site_name():
     field = lower_field('<group name="hdr" ref="header"/>', defs=HEADER_DEF)
 
     assert field == Struct(
-        "hdr", (Int("id", 16), Int("key", 16)), meta=Meta(origin="header")
+        "hdr", (Int("id", 16), Int("key", 16)), meta=Meta(origin=("", "header"))
     )
 
 
@@ -294,3 +294,105 @@ def test_ref_matching_field_def_and_message_is_ambiguous():
 def test_unknown_element_is_an_error():
     with pytest.raises(LoweringError, match="unknown element <bogus>"):
         lower_field('<bogus name="x"/>')
+
+
+# --- xsi:type ---------------------------------------------------------------
+
+
+def test_undeclared_xsi_prefix_is_accepted():
+    with pytest.raises(LoweringError, match="unknown xsi:type 'mystery'"):
+        lower_field('<group name="g" xsi:type="mystery"/>')
+
+
+def test_declared_xsi_prefix_is_accepted():
+    with pytest.raises(LoweringError, match="unknown xsi:type 'mystery'"):
+        lower_string(
+            '<icd xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+            '<message name="m"><group name="g" xsi:type="mystery"/></message></icd>'
+        )
+
+
+def test_xsi_type_dispatches_to_dialect_method():
+    class Dialect(Lowering):
+        def lower_type_mystery(self, elem):
+            return Spare(3)
+
+    icd = lower_string(
+        '<icd><message name="m"><group name="g" xsi:type="mystery"/></message></icd>',
+        lowering=Dialect,
+    )
+
+    assert icd.messages[0].body.fields == (Spare(3),)
+
+
+# --- namespace: the ICD's own uri and alias ---------------------------------
+
+
+def test_icd_namespace_and_alias_come_from_namespace_element():
+    icd = lower_string(
+        '<icd><namespace alias="example">http://example.com/schema</namespace></icd>'
+    )
+
+    assert (icd.namespace, icd.alias) == ("http://example.com/schema", "example")
+
+
+def test_icd_without_namespace_element_has_empty_namespace():
+    icd = lower_string("<icd/>")
+
+    assert (icd.namespace, icd.alias) == ("", "")
+
+
+def test_more_than_one_namespace_element_is_an_error():
+    with pytest.raises(LoweringError, match="more than one <namespace>"):
+        lower_string(
+            '<icd><namespace alias="a">urn:a</namespace>'
+            '<namespace alias="b">urn:b</namespace></icd>'
+        )
+
+
+SELF = (
+    '<icd><namespace alias="me">urn:self</namespace>'
+    '<fieldDefs><group id="hdr"><spare bitCount="4"/></group></fieldDefs>'
+    '<message name="m">{body}</message><message name="other"/></icd>'
+)
+
+
+def test_own_alias_prefix_on_message_ref_resolves_locally():
+    icd = lower_string(SELF.format(body='<group name="x" ref="me:other"/>'))
+
+    assert icd.messages[0].body.fields[0] == MessageRef("x", ("urn:self", "other"))
+
+
+def test_own_alias_prefix_on_field_def_resolves_locally():
+    icd = lower_string(SELF.format(body='<group name="x" ref="me:hdr"/>'))
+
+    assert icd.messages[0].body.fields[0].meta.origin == ("urn:self", "hdr")
+
+
+def test_unknown_alias_prefix_is_an_error():
+    with pytest.raises(LoweringError, match="unknown namespace alias 'nope'"):
+        lower_string(SELF.format(body='<group name="x" ref="nope:other"/>'))
+
+
+# --- several files ----------------------------------------------------------
+
+
+def test_lower_many_keys_icds_by_declared_namespace():
+    icds = lower_many(
+        [
+            '<icd><namespace alias="a">urn:a</namespace></icd>',
+            '<icd><namespace alias="b">urn:b</namespace></icd>',
+        ]
+    )
+
+    assert sorted(icds) == ["urn:a", "urn:b"]
+
+
+def test_lower_many_rejects_duplicate_namespace():
+    with pytest.raises(LoweringError, match="namespace 'urn:a' is declared by more than one ICD"):
+        lower_many(
+            [
+                '<icd><namespace alias="a">urn:a</namespace></icd>',
+                '<icd><namespace alias="a2">urn:a</namespace></icd>',
+            ]
+        )

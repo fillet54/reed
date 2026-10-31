@@ -1,12 +1,18 @@
-"""Lower an XML ICD (ElementTree DOM) into the IR.
+"""Lower XML ICDs (ElementTree DOMs) into the IR.
 
 FieldDef refs are inlined: each fieldDef is lowered once, the first time it is
 used, and the same object is placed at every use site. Refs to a message name
 stay as MessageRef.
+
+An ICD names itself with `<namespace alias="x">uri</namespace>`; `ref="x:name"`
+with its own alias resolves locally. Imports of other files (schemaLocation)
+will add more aliases.
 """
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from dataclasses import replace
 from xml.etree import ElementTree as ET
 
@@ -28,6 +34,9 @@ from .ir import (
     Union,
 )
 
+XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
+XSI_TYPE = f"{{{XSI_NS}}}type"
+
 # Children that describe their parent rather than being fields of it.
 META_TAGS = {"label", "description", "namedValues"}
 
@@ -36,12 +45,39 @@ class LoweringError(ValueError):
     pass
 
 
-def lower_string(text: str) -> Icd:
-    return lower_tree(ET.fromstring(text))
+def parse(text: str) -> ET.Element:
+    """Parse ICD XML, declaring the xsi prefix if the file uses it undeclared."""
+    if "xsi:" in text and "xmlns:xsi=" not in text:
+        text = re.sub(
+            r"<([A-Za-z_][\w.\-]*)", rf'<\1 xmlns:xsi="{XSI_NS}"', text, count=1
+        )
+    return ET.fromstring(text)
 
 
-def lower_tree(root: ET.Element) -> Icd:
-    return Lowering(root).icd()
+def lower_string(text: str, lowering: type[Lowering] | None = None) -> Icd:
+    (icd,) = lower_many([text], lowering).values()
+    return icd
+
+
+def lower_many(
+    sources: Iterable[str | ET.Element], lowering: type[Lowering] | None = None
+) -> dict[str, Icd]:
+    """Lower several ICD files, keyed by the namespace uri each one declares."""
+    catalog = Catalog()
+    cls = lowering or Lowering
+
+    for source in sources:
+        cls(parse(source) if isinstance(source, str) else source, catalog=catalog)
+
+    return {uri: module.icd() for uri, module in catalog.modules.items()}
+
+
+class Catalog:
+    """The loaded ICDs, plus lowering state shared across them."""
+
+    def __init__(self):
+        self.modules: dict[str, Lowering] = {}
+        self.in_progress: list[tuple[str, str]] = []  # fieldDefs being lowered
 
 
 def _tag(elem: ET.Element) -> str:
@@ -55,11 +91,29 @@ def _int(value: str) -> int:
 class Lowering:
     """Base lowering. Dialects subclass it and add `lower_<tag>` methods."""
 
-    def __init__(self, root: ET.Element, namespace: str = ""):
+    def __init__(self, root: ET.Element, catalog: Catalog | None = None):
         self.root = root
-        self.namespace = namespace
+        self.namespace = ""
+        self.alias = ""
         self.def_elems: dict[str, ET.Element] = {}
         self.message_names: set[str] = set()
+
+        namespaces = [c for c in root if _tag(c) == "namespace"]
+        if len(namespaces) > 1:
+            raise LoweringError("more than one <namespace> element")
+        if namespaces:
+            self.alias = self.required(namespaces[0], "alias")
+            self.namespace = (namespaces[0].text or "").strip()
+
+        # Prefixes usable in refs. Imports (schemaLocation) will add to this.
+        self.aliases: dict[str, Lowering] = {self.alias: self} if self.alias else {}
+
+        self.catalog = catalog or Catalog()
+        if self.namespace in self.catalog.modules:
+            raise LoweringError(
+                f"namespace {self.namespace!r} is declared by more than one ICD"
+            )
+        self.catalog.modules[self.namespace] = self
 
         for child in root:
             if _tag(child) == "fieldDefs":
@@ -69,7 +123,6 @@ class Lowering:
                 self.message_names.add(self.required(child, "name"))
 
         self.defs: dict[str, Node] = {}
-        self.in_progress: list[str] = []
 
     # --- entry points -------------------------------------------------------
 
@@ -77,13 +130,20 @@ class Lowering:
         messages = tuple(
             self.message(child) for child in self.root if _tag(child) == "message"
         )
-        return Icd(namespace=self.namespace, messages=messages)
+        return Icd(namespace=self.namespace, messages=messages, alias=self.alias)
 
     def message(self, elem: ET.Element) -> Message:
         name = self.required(elem, "name")
         return Message(key=(name,), body=Struct(name, self.fields(elem), meta=self.meta(elem)))
 
     def field(self, elem: ET.Element) -> Node:
+        xsi_type = elem.get(XSI_TYPE)
+        if xsi_type and not elem.get("ref"):
+            method = getattr(self, f"lower_type_{xsi_type}", None)
+            if method is None:
+                raise LoweringError(f"unknown xsi:type {xsi_type!r} on <{_tag(elem)}>")
+            return method(elem)
+
         method = getattr(self, f"lower_{_tag(elem)}", None)
         if method is None:
             raise LoweringError(f"unknown element <{_tag(elem)}>")
@@ -133,9 +193,13 @@ class Lowering:
         return Union(
             elem.get("name", ""),
             self.required(elem, "discrimField"),
-            tuple(self.case(c) for c in elem if _tag(c) not in META_TAGS),
+            tuple(case for c in elem if _tag(c) not in META_TAGS for case in self.cases(c)),
             meta=self.meta(elem),
         )
+
+    def cases(self, elem: ET.Element):
+        """Cases contributed by one union child. Dialects may yield several."""
+        yield self.case(elem)
 
     def case(self, elem: ET.Element) -> Case:
         name = self.required(elem, "name")
@@ -151,36 +215,51 @@ class Lowering:
     # --- refs ---------------------------------------------------------------
 
     def ref(self, elem: ET.Element) -> Node:
-        key = elem.get("ref")
+        ref = elem.get("ref")
+        module, key = self.module_for(ref)
         name = elem.get("name") or key
-        is_def = key in self.def_elems
-        is_message = key in self.message_names
+        is_def = key in module.def_elems
+        is_message = key in module.message_names
 
         if is_def and is_message:
-            raise LoweringError(f"ambiguous ref {key!r}: both a fieldDef and a message")
+            raise LoweringError(f"ambiguous ref {ref!r}: both a fieldDef and a message")
         if is_message:
-            return MessageRef(name, (self.namespace, key))
+            return MessageRef(name, (module.namespace, key))
         if not is_def:
-            raise LoweringError(f"unresolved ref {key!r} on <{_tag(elem)} name={name!r}>")
+            raise LoweringError(f"unresolved ref {ref!r} on <{_tag(elem)} name={name!r}>")
 
-        return replace(self.field_def(key), name=name)
+        return replace(module.field_def(key), name=name)
+
+    def module_for(self, ref: str) -> tuple[Lowering, str]:
+        """Split `alias:key` and find the ICD it names."""
+        if ":" not in ref:
+            return self, ref
+
+        alias, key = ref.split(":", 1)
+        if alias not in self.aliases:
+            raise LoweringError(f"unknown namespace alias {alias!r} in ref {ref!r}")
+        return self.aliases[alias], key
 
     def field_def(self, key: str) -> Node:
         if key in self.defs:
             return self.defs[key]
 
-        if key in self.in_progress:
-            chain = " -> ".join(self.in_progress[self.in_progress.index(key):] + [key])
+        stack = self.catalog.in_progress
+        here = (self.namespace, key)
+        if here in stack:
+            chain = " -> ".join(
+                f"{ns}:{k}" if ns else k for ns, k in stack[stack.index(here):] + [here]
+            )
             raise LoweringError(f"fieldDef ref cycle: {chain}")
 
-        self.in_progress.append(key)
+        stack.append(here)
         try:
             node = self.field(self.def_elems[key])
         finally:
-            self.in_progress.pop()
+            stack.pop()
 
         if hasattr(node, "meta"):
-            node = replace(node, meta=replace(node.meta, origin=key))
+            node = replace(node, meta=replace(node.meta, origin=here))
         self.defs[key] = node
         return node
 

@@ -35,7 +35,9 @@ XML ──parse──▶ DOM ──lower──▶ IR ──link/validate──�
 - Renderers link to the payload instead of repeating it. Codecs delegate to the inner module. Expansion treats it as one unit unless asked to go inside.
 
 ### Namespaces
-`ref="alias:name"` → `<namespace alias>` gives a URI → a catalog maps the URI to a file or loaded module. Each ICD file lowers to its own `Icd` module.
+- `<namespace alias="example">uri</namespace>` is the file **declaring its own** namespace. There is at most one per file. It sets `Icd.namespace` (the uri) and `Icd.alias` (the prefix). `lower_many` keys each ICD by the uri it declares; two files declaring the same uri is an error.
+- The alias exists for convenience and documentation. Refs may use it (`ref="example:header"` resolves locally). An earlier binary ⇄ XML tool for this format used it as the element prefix in instance documents (`<example:command>`) instead of an `xmlns` declaration, so a future instance converter should do the same.
+- **Imports (not done yet):** `schemaLocation` elements at the top of a file will import other files and give each an alias, so a fieldDef or message from another file can be used (`ref="payload:header"`). They add entries to the lowering's alias table; the shared `Catalog` already holds the other loaded ICDs and detects fieldDef cycles across them.
 
 ### Sizes
 - `bitCount="<n>"` becomes `declared_bits`, which validation checks. `bitCount="variable"` becomes `VARIABLE` and is only a hint; the real size is computed.

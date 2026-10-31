@@ -15,7 +15,7 @@ docs = ["docutils>=0.20", "sphinx>=7.3"]
 test = ["pytest>=8"]
 
 [tool.setuptools]
-packages = ["reed"]
+packages = ["reed", "reed.dialects"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

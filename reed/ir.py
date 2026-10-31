@@ -16,6 +16,9 @@ Path = str
 # Points at a top-level message: (namespace uri, message name).
 MsgKey = tuple[str, str]
 
+# Names a fieldDef: (namespace uri, fieldDef id).
+DefKey = tuple[str, str]
+
 
 class _Variable:
     """Marker for bitCount="variable": the size is computed, not declared."""
@@ -52,7 +55,7 @@ class Meta:
 
     label: str | None = None
     description: str | None = None
-    origin: str | None = None  # fieldDef id this was inlined from
+    origin: DefKey | None = None  # fieldDef this was inlined from
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +153,7 @@ class Message:
 
 @dataclass(frozen=True, slots=True)
 class Icd:
-    namespace: str
+    namespace: str  # uri from the file's own <namespace> element
     messages: tuple[Message, ...]
+    alias: str = ""  # its prefix, e.g. "example" (refs, and <example:command> instances)
     layout: LayoutPolicy = LayoutPolicy()

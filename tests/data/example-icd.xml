@@ -44,7 +44,7 @@
         <group name="systemId" ref="systemIdRef"></group>
        </command>
       <command name="changeFrequency" discrimValue="21">
-        <scalar name="freq" bitCount="16" scale="1000" offet="2500">
+        <scalar name="freq" bitCount="16" scale="1000" offset="2500">
           <label>Frequency</label>
           <description>Frequency with scaling</description>
         </scalar>
