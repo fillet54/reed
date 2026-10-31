@@ -2,7 +2,8 @@
 
 import pytest
 
-from reed.dialects.example import ExampleLowering
+from reed.dialect import BASE
+from reed.dialects.example import EXAMPLE, ExampleLowering
 from reed.ir import Array, Case, Domain, Int, Meta, Spare, Struct, Union
 from reed.lower import LoweringError, lower_string
 
@@ -121,3 +122,98 @@ def test_group2_can_be_a_field_def():
 def test_group2_is_not_part_of_the_base_lowering():
     with pytest.raises(LoweringError, match="unknown element <group2>"):
         lower_string('<icd><message name="m"><group2 name="g"/></message></icd>')
+
+
+# --- protocolled commands: a dialect-specific rule --------------------------
+
+
+def test_protocolled_attribute_is_kept_on_the_case():
+    (union,) = lower_fields(
+        '<union name="body" discrimField="id">'
+        '<command name="a" discrimValue="1" protocolled="false"/>'
+        '<command name="b" discrimValue="2"/></union>'
+    )
+
+    assert union.cases[0].meta.prop("protocolled") is False
+    assert union.cases[1].meta.prop("protocolled") is None
+
+
+def command_issues(commands: str):
+    """Validate a 16-bit header followed by a union of `commands`."""
+    icds = EXAMPLE.lower(
+        [
+            '<icd><message name="m"><integer name="id" bitCount="16"/>'
+            f'<union name="body" discrimField="../id">{commands}</union></message></icd>'
+        ]
+    )
+    return [(i.severity, i.code, i.path) for i in EXAMPLE.validate(icds)]
+
+
+def test_unprotocolled_command_over_50_bytes_is_an_error():
+    # 16-bit header + 392-bit body = 408 bits = 51 bytes: the whole message counts.
+    assert command_issues(
+        '<command name="big" discrimValue="1" protocolled="false"><spare bitCount="392"/></command>'
+    ) == [("error", "unprotocolled-too-large", "m/body/big")]
+
+
+def test_unprotocolled_command_within_50_bytes_is_fine():
+    assert (
+        command_issues(
+            '<command name="ok" discrimValue="1" protocolled="false">'
+            '<spare bitCount="384"/></command>'
+        )
+        == []
+    )
+
+
+def test_protocolled_command_can_be_larger():
+    assert (
+        command_issues(
+            '<command name="big" discrimValue="1" protocolled="true">'
+            '<spare bitCount="392"/></command>'
+            '<command name="plain" discrimValue="2"><spare bitCount="392"/></command>'
+        )
+        == []
+    )
+
+
+def test_limit_only_counts_the_chosen_command():
+    # A large sibling case doesn't count against the small unprotocolled one.
+    assert (
+        command_issues(
+            '<command name="small" discrimValue="1" protocolled="false"/>'
+            '<command name="huge" discrimValue="2"><spare bitCount="2000"/></command>'
+        )
+        == []
+    )
+
+
+def test_base_dialect_has_no_protocolled_rule():
+    icds = BASE.lower(
+        [
+            '<icd><message name="m"><integer name="id" bitCount="16"/>'
+            '<union name="body" discrimField="../id">'
+            '<command name="big" discrimValue="1" protocolled="false"><spare bitCount="392"/>'
+            "</command></union></message></icd>"
+        ]
+    )
+
+    assert BASE.validate(icds) == []
+
+
+# --- the whole example file -------------------------------------------------
+
+
+def test_example_icd_reports_its_duplicate_unit_values():
+    with open("tests/data/example-icd.xml") as f:
+        icds = EXAMPLE.lower([f.read()])
+
+    found = {(i.code, i.path) for i in EXAMPLE.validate(icds)}
+
+    assert found == {
+        # systemIdRef: left, center and right under vehicle/computer are all
+        # value 1. Reported once, at the first use of the fieldDef.
+        ("duplicate-domain-value", "command/commandBody/power/systemId"),
+        # so the status union also has three cases with value (1, 1, 1)
+        ("duplicate-case-value", "return/returnBody/status/(union)"),
+    }

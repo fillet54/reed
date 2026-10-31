@@ -56,6 +56,13 @@ class Meta:
     label: str | None = None
     description: str | None = None
     origin: DefKey | None = None  # fieldDef this was inlined from
+    props: tuple[tuple[str, object], ...] = ()  # dialect-specific attributes
+
+    def prop(self, name: str, default=None):
+        for key, value in self.props:
+            if key == name:
+                return value
+        return default
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +113,7 @@ class Case:
     kind: str  # "command", "return", "system", ...
     value: int | tuple[int, ...]
     body: Struct | MessageRef
+    meta: Meta = field(default_factory=Meta)
 
 
 @dataclass(frozen=True, slots=True)
