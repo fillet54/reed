@@ -99,4 +99,9 @@ EXAMPLE = Dialect(
     ExampleLowering,
     BASE_RULES + (unprotocolled_command_size,),
     layout=LayoutPolicy(word_bits=16, byteorder="big", pad=True),
+    expand=(
+        "command/header/id",  # command bodies
+        "return/header/id",  # return bodies
+        "return/returnBody/*/systemId",  # system IDs
+    ),
 )

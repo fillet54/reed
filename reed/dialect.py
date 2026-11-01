@@ -5,7 +5,8 @@
     icds = EXAMPLE.lower([xml_text, ...])
     issues = EXAMPLE.validate(icds)
 
-Split rules for expansion will join it later.
+`expand` lists the discriminator paths whose unions split into variants
+(see reed.expand).
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ class Dialect:
     lowering: type[Lowering] = Lowering
     rules: tuple[Rule, ...] = BASE_RULES
     layout: LayoutPolicy = LayoutPolicy()  # word size, byte order, padding
+    expand: tuple[str, ...] = ()  # discriminator paths to split on, e.g. "command/header/id"
 
     def lower(
         self, sources: Iterable[str | ET.Element], names: Iterable[str] | None = None
@@ -32,7 +34,15 @@ class Dialect:
         return lower_many(sources, self.lowering, names, self.layout)
 
     def validate(self, icds: Icd | Mapping[str, Icd]) -> list[Issue]:
-        return validate(icds, self.rules)
+        if not self.expand:
+            return validate(icds, self.rules)
+
+        from .expand import expansion_rules, unused_patterns
+
+        if isinstance(icds, Icd):
+            icds = {icds.namespace: icds}
+        issues = validate(icds, self.rules + expansion_rules(self.expand))
+        return issues + unused_patterns(icds, self.expand)
 
 
 BASE = Dialect("base")

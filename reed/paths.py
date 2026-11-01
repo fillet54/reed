@@ -36,7 +36,9 @@ def children(frame: Frame) -> list[Frame]:
     elif isinstance(node, Union):
         items = [(case.name, case.body) for case in node.cases]
     elif isinstance(node, Array):
-        items = [(node.name, node.element)]
+        # The element is a level for relative paths, but not in display paths:
+        # inside array "items" a field is "items/x", not "items/items/x".
+        return [Frame(node.element, frame.index + (0,), frame.names)]
     else:
         items = []
 

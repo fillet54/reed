@@ -219,16 +219,40 @@ def test_base_dialect_has_no_protocolled_rule():
 # --- the whole example file -------------------------------------------------
 
 
-def test_example_icd_reports_its_duplicate_unit_values():
+DUPLICATE_UNITS = """
+<icd><fieldDefs>
+  <group id="systemIdRef" xsi:type="systemIdRef" bitCount="21">
+    <system name="vehicle" value="1"><subsystem name="computer" value="1">
+      <unit name="left" value="1"/><unit name="center" value="1"/>
+    </subsystem></system>
+  </group>
+</fieldDefs>
+<message name="a"><group name="systemId" ref="systemIdRef"/></message>
+<message name="b">
+  <group name="systemId" ref="systemIdRef"/>
+  <union discrimField="../systemId">
+    <system name="vehicle" value="1"><subsystem name="computer" value="1">
+      <unit name="left" value="1"/><unit name="center" value="1"/>
+    </subsystem></system>
+  </union>
+</message></icd>
+"""
+
+
+def test_duplicate_unit_values_are_reported_once_at_first_use():
+    found = {(i.code, i.path) for i in EXAMPLE.validate(EXAMPLE.lower([DUPLICATE_UNITS]))}
+
+    assert found == {
+        # systemIdRef: left and center are both 1. Reported once, at the first
+        # use of the fieldDef...
+        ("duplicate-domain-value", "a/systemId"),
+        # ...and the union keyed by it has two cases with value (1, 1, 1).
+        ("duplicate-case-value", "b/(union)"),
+    }
+
+
+def test_example_icd_is_valid():
     with open("tests/data/example-icd.xml") as f:
         icds = EXAMPLE.lower([f.read()])
 
-    found = {(i.code, i.path) for i in EXAMPLE.validate(icds)}
-
-    assert found == {
-        # systemIdRef: left, center and right under vehicle/computer are all
-        # value 1. Reported once, at the first use of the fieldDef.
-        ("duplicate-domain-value", "command/commandBody/power/systemId"),
-        # so the status union also has three cases with value (1, 1, 1)
-        ("duplicate-case-value", "return/returnBody/status/(union)"),
-    }
+    assert EXAMPLE.validate(icds) == []

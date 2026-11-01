@@ -158,7 +158,8 @@ Node = TypingUnion[Int, Scaled, Spare, Struct, Union, Array, MessageRef]
 class Message:
     key: tuple[str, ...]  # ("command",) or after expansion ("command", "power", "fuel")
     body: Struct
-    consts: tuple[tuple[Path, int], ...] = ()  # fields fixed by expansion
+    consts: tuple[tuple[Path, int | tuple[int, ...]], ...] = ()  # fields fixed by expansion
+    namespace: str = ""  # of the ICD it belongs to (variants keep it)
 
     @property
     def name(self) -> str:

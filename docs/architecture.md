@@ -57,11 +57,27 @@ XML ──parse──▶ DOM ──lower──▶ IR ──link/validate──�
   - count field must come before its array.
 
 ### Expansion
-One idea covers it: pick a field, list its possible values, and emit one variant per value with that field fixed (`Message.consts`) and any union keyed on it replaced by the matching case.
-- `SplitOnUnion("header/id")`: command/return bodies.
-- `SplitOnDomain("systemId")`: system/subsystem/unit paths. Whether value 0 means "whole system/subsystem" is a rule option.
+A variant is a message with some unions resolved: each chosen union is replaced by its case and the case's discriminator is fixed. Variants feed doc tables, code generation, coverage listings and diffs, which want complete messages with small context and no unions.
 
-Each dialect declares its own list of rules. Transforms rebuild only the path from the root to the change and share everything else.
+- **Which unions:** the dialect lists discriminator paths, written from the top-level message in the original (unexpanded) message, `*` matching one level:
+  ```python
+  EXAMPLE = Dialect(..., expand=(
+      "command/header/id", "return/header/id",      # command / return bodies
+      "command/commandBody/*/subid",                 # subcommands
+      "return/returnBody/*/systemId",                # system IDs (example dialect)
+  ))
+  ```
+  A union is split when its discriminator's path matches. Subcommands and system IDs are the same mechanism; a system ID's value is a tuple. A plain `systemId` field with no union keyed on it is not split. A pattern applies to every loaded ICD; an alias prefix (`payload:command/...`) limits it to one.
+- **Replacing a union:** the case's fields go in a group named after the union (`command/power` → `commandBody/{systemId, mode, spare}`); an unnamed union's fields go straight into the parent. The discriminator stays in the layout, fixed: `Message.consts` maps its path in the variant to the value. System ID levels stand alone: `fuel.tanks` gets only its own fields, not `fuel`'s.
+- **Nesting:** expansion repeats inside each variant (`command/id=5/subid=10`). Two splittable unions side by side nest in field order, giving every combination.
+- **Not expanded:**
+  - unions whose discriminator isn't listed (and anything inside them);
+  - unions inside an array element, since each element may choose differently (`expand-in-array` error when listed);
+  - carried messages: the variant links to the payload ICD's own tree.
+- **Identity:** `id` = message name, then the discriminator values in order: `("return", 1, (10, 1, 0))`. `name` = case names joined by `/`: `return/status/fuel.tanks`. Diffs match variants by `id`.
+- **Output:** a tree per message. Each node is a variant (the root is the message itself); leaves are fully expanded.
+- **Errors first:** expansion refuses an ICD with validation errors. Duplicate case values would give two variants one id.
+- A listed pattern that matches no union is a warning.
 
 ### Codec
 `reed/codec.py`: `encode(message, value, icds) -> bytes` and `decode(message, data, icds) -> dict`, using a sequential bit cursor (no precomputed offsets).

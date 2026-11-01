@@ -177,7 +177,8 @@ class Lowering:
 
     def message(self, elem: ET.Element) -> Message:
         name = self.required(elem, "name")
-        return Message(key=(name,), body=Struct(name, self.fields(elem), meta=self.meta(elem)))
+        body = Struct(name, self.fields(elem), meta=self.meta(elem))
+        return Message(key=(name,), body=body, namespace=self.namespace)
 
     def field(self, elem: ET.Element) -> Node:
         xsi_type = elem.get(XSI_TYPE)

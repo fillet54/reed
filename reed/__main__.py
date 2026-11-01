@@ -1,4 +1,4 @@
-"""Command line: `reed check FILE...`."""
+"""Command line: `reed check FILE...` and `reed expand FILE...`."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import sys
 import time
 
 from . import dialects
+from .expand import ExpandError, Variant, expand
 from .ir import Union
 from .lower import LoweringError
 from .size import size_of
@@ -23,8 +24,39 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--sizes", action="store_true", help="print message and case sizes")
     check.add_argument("--stats", action="store_true", help="print time and peak memory")
 
+    tree = commands.add_parser("expand", help="print the variant tree of each message")
+    tree.add_argument("files", nargs="+", help="ICD XML files (all imports together)")
+    tree.add_argument("--dialect", choices=dialects.NAMES, default="base")
+
     args = parser.parse_args(argv)
+    if args.command == "expand":
+        return run_expand(args)
     return run_check(args)
+
+
+def run_expand(args) -> int:
+    dialect = dialects.get(args.dialect)
+    try:
+        icds = dialect.lower([read(path) for path in args.files], names=args.files)
+        trees = expand(icds, dialect)
+    except (OSError, LoweringError, ExpandError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    for roots in trees.values():
+        for root in roots:
+            print_tree(root, icds)
+    return 0
+
+
+def print_tree(variant: Variant, icds, lead: str = "", branch: str = "") -> None:
+    ident = ", ".join(map(str, variant.id))
+    print(f"{lead}{branch}{variant.name}  ({ident})  {describe_size(variant.message, icds)}")
+
+    lead += {"": "", "├─ ": "│  ", "└─ ": "   "}[branch]
+    for i, child in enumerate(variant.children):
+        last = i == len(variant.children) - 1
+        print_tree(child, icds, lead, "└─ " if last else "├─ ")
 
 
 def run_check(args) -> int:

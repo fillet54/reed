@@ -187,10 +187,8 @@ def count_range(node) -> tuple[int, int] | None:
 
 def layout_of(icds: Mapping[str, Icd], message: Message) -> LayoutPolicy:
     """The layout of the ICD that holds `message` (the default when not loaded)."""
-    for icd in icds.values():
-        if any(m is message for m in icd.messages):
-            return icd.layout
-    return LayoutPolicy()
+    icd = icds.get(message.namespace)
+    return icd.layout if icd is not None else LayoutPolicy()
 
 
 def find_message(icds: Mapping[str, Icd], key: MsgKey) -> Message | None:

@@ -9,8 +9,8 @@
       <system name="vehicle" value="1">
         <subsystem name="computer" value="1">
           <unit name="left" value="1"></unit>
-          <unit name="center" value="1"></unit>
-          <unit name="right" value="1"></unit>
+          <unit name="center" value="2"></unit>
+          <unit name="right" value="3"></unit>
         </subsystem>
       </system>
       <system name="fuel" value="10">
@@ -68,12 +68,12 @@
                   <integer name="version" bitCount="16"></integer>
                 </group>
               </unit>
-              <unit name="center" value="1">
+              <unit name="center" value="2">
                 <group name="info">
                   <integer name="version" bitCount="16"></integer>
                 </group>
               </unit>
-              <unit name="right" value="1">
+              <unit name="right" value="3">
                 <group name="info">
                   <integer name="version" bitCount="16"></integer>
                 </group>

@@ -60,9 +60,8 @@ def test_warnings_alone_exit_zero(tmp_path, capsys):
 def test_example_dialect_on_example_icd(capsys):
     code, out, _ = check(capsys, "--dialect", "example", EXAMPLE_ICD)
 
-    assert code == 1
-    assert "[duplicate-domain-value]" in out
-    assert "2 messages, 2 errors, 0 warnings" in out
+    assert code == 0
+    assert "2 messages, 0 errors, 0 warnings" in out
 
 
 def test_lowering_error_names_the_file(capsys):
@@ -110,3 +109,47 @@ def test_stats_reports_time_and_memory(capsys):
 
     assert "lowered in" in out
     assert "peak memory" in out
+
+
+# --- reed expand ------------------------------------------------------------
+
+
+def expand(capsys, *args):
+    code = main(["expand", *args])
+    out = capsys.readouterr()
+    return code, out.out, out.err
+
+
+def test_expand_prints_the_variant_tree(capsys):
+    code, out, _ = expand(capsys, "--dialect", "example", EXAMPLE_ICD)
+
+    assert code == 0
+    lines = out.splitlines()
+    assert lines[:4] == [
+        "command  (command)  48–64 bits",
+        "├─ command/power  (command, 1)  64 bits",
+        "├─ command/ibit  (command, 2)  64 bits (53 used)",
+        "└─ command/changeFrequency  (command, 21)  48 bits",
+    ]
+    assert "│  ├─ return/status/fuel  (return, 1, (10, 0, 0))  96 bits (85 used)" in lines
+    assert "│  └─ return/status/fuel.tanks  (return, 1, (10, 1, 0))  80 bits (69 used)" in lines
+    assert lines[-1] == "└─ return/event  (return, 2)  80 bits (69 used)"
+
+
+def test_expand_refuses_an_icd_with_errors(tmp_path, capsys):
+    path = write(
+        tmp_path,
+        "dup.xml",
+        '<icd><message name="command"><group name="header">'
+        '<integer name="id" bitCount="16"/><integer name="key" bitCount="16"/></group>'
+        '<union name="commandBody" discrimField="../header/id">'
+        '<command name="a" discrimValue="1"/><command name="b" discrimValue="1"/>'
+        "</union></message></icd>",
+    )
+
+    code, out, err = expand(capsys, "--dialect", "example", path)
+
+    assert code == 1
+    assert out == ""
+    assert "not expanding" in err
+    assert "[duplicate-case-value]" in err
