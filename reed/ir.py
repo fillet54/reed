@@ -107,6 +107,23 @@ class Scaled:
 
 
 @dataclass(frozen=True, slots=True)
+class String:
+    """Text, one byte per character.
+
+    Fixed (`bits` a number): bits/8 characters, zero-filled when shorter, no
+    terminator when full. Variable (`bits` is VARIABLE): an 8-bit length, then
+    that many characters, no terminator, no alignment.
+    """
+
+    name: str
+    bits: int | _Variable
+    meta: Meta = field(default_factory=Meta)
+
+
+STRING_LENGTH_BITS = 8  # the length prefix of a variable string
+
+
+@dataclass(frozen=True, slots=True)
 class Spare:
     bits: int
 
@@ -166,7 +183,7 @@ class MessageRef:
     target: MsgKey
 
 
-Node = TypingUnion[Int, Scaled, Spare, Struct, Union, Array, MessageRef]
+Node = TypingUnion[Int, Scaled, String, Spare, Struct, Union, Array, MessageRef]
 
 
 @dataclass(frozen=True, slots=True)

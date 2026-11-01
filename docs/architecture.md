@@ -40,6 +40,11 @@ XML ──parse──▶ DOM ──lower──▶ IR ──link/validate──�
 - The alias exists for convenience and documentation. Refs may use it (`ref="example:header"` resolves locally). An earlier binary ⇄ XML tool for this format used it as the element prefix in instance documents (`<example:command>`) instead of an `xmlns` declaration, so a future instance converter should do the same.
 - **Imports:** `<refSchemaLocation alias="support">https://example.com/support-icd support-msg.xsd</refSchemaLocation>` makes `support:` mean the loaded ICD whose `<namespace>` is that uri (the `.xsd` part is ignored). Without an import line, a prefix matches a loaded ICD's own alias. `load_files` / `Dialect.load` / `reed check` find an imported file next to the importer, named after the uri's last segment (`support-icd.xml`), follow imports transitively and load each file once. If the file isn't found, a ref through the alias fails with a hint naming the expected file. All ICDs share one `Catalog`, which also catches fieldDef cycles across files.
 
+### Strings
+- `<string bitCount="64">` is fixed: bitCount/8 one-byte characters, zero-filled when shorter, no terminator when full. bitCount must be whole words (`string-bits`).
+- `<string bitCount="variable">` is an 8-bit length then that many characters (0–255), with no terminator and no alignment: 8–2048 bits.
+- Codec values are `str`, one Latin-1 byte per character. Characters go in stream order, so the first is in the high byte of its word.
+
 ### Default cases
 - `discrimValue="default"` marks the case used when the discriminator matches no other one (`Case.value is DEFAULT`). Usually it's written `<spare discrimValue="default" bitCount="30"/>`, a case with no fields that is named `default`. Any case can be the default, though. A `<spare>` case with a number is a fieldless case named `spare<N>`.
 - Decoding falls back to the default case. Encoding can't pick the discriminator for it: the value comes from the caller or the field's `<default>`, and it mustn't be another case's value. Expansion gives it a variant (`command/default`) whose discriminator stays open (no const). Two default cases in one union are a `duplicate-case-value`.
@@ -47,6 +52,8 @@ XML ──parse──▶ DOM ──lower──▶ IR ──link/validate──�
 ### Named values and defaults
 - `<namedValues restrict="true">` with `<namedValue name value>` children gives an integer its names; `restrict` means only those values are legal, which codecs check.
 - `<namedValues fromUnion="CommandBodyUnion">` adds the cases of that union (name → discrimValue), ahead of any listed ones. The IR keeps the union name. Lowering fills the values in per message, looking for a union of that name in the groups enclosing the field, innermost first, so a shared header fieldDef gets each message's own union. Only the path down to the field is copied. A name that matches nothing is a `from-union-not-found` warning.
+- `<namedValues fromUnion="#CmdUnion">` (or `#alias:id`) takes the cases of the union **fieldDef** with that id instead, resolved when lowering. An unknown id, or a fieldDef that isn't a union, is a `from-union-not-found` warning.
+- Unions inside `<fieldDefs>` may leave out `discrimField`. The use gives it (`<union name="body" ref="CmdUnion" discrimField="../id"/>`), and a union with none is a `missing-discrim` error. A union written directly in a message still requires it.
 - `<default>` (a number, or an integer's named value) is used by encoders when a field is left out. A chosen case still sets its discriminator, and a given value wins. A default may be outside the restricted values (e.g. a "none" 0), but it must fit in the bits (`default-out-of-range`).
 - A ref can override `<namedValues>` and `<default>`, as with `<label>`/`<description>`.
 

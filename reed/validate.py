@@ -10,7 +10,7 @@ node of that type and a Context, and yields Issues:
 
 Dialects extend validation by adding rules to BASE_RULES (see reed.dialect).
 Node types a rule can target: Message, Struct, Union, Case, Array, Int,
-Scaled, Spare, MessageRef. A Case rule sees the union as `ctx.node`.
+Scaled, String, Spare, MessageRef. A Case rule sees the union as `ctx.node`.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import math
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
-from .ir import VARIABLE, Array, Case, Domain, Icd, Int, Message, Scaled, Struct, Union
+from .ir import VARIABLE, Array, Case, Domain, Icd, Int, Message, Scaled, String, Struct, Union
 from .issues import Issue
 from .paths import Frame, Stack, children, is_before, push, resolve, root_stack
 from .size import Size, Sizer
@@ -178,6 +178,12 @@ def declared_bit_count(node, ctx):
 
 @rule(Union)
 def discriminator(node, ctx):
+    if not node.discrim:
+        yield ctx.error(
+            "missing-discrim",
+            "union has no discrimField; give one where its fieldDef is used",
+        )
+        return
     yield from _check_path(ctx, node.discrim, "discrimField")
 
 
@@ -238,6 +244,16 @@ def _check_path(ctx: Context, path: str, attr: str):
     return target
 
 
+@rule(String)
+def string_bits(node, ctx):
+    """A fixed string fills whole words; a variable one needs no alignment."""
+    word = ctx.icd.layout.word_bits
+    if node.bits is not VARIABLE and node.bits % word:
+        yield ctx.error(
+            "string-bits", f"bitCount {node.bits} is not a whole number of {word}-bit words"
+        )
+
+
 @rule(Int)
 def integer_default(node, ctx):
     yield from _check_default(node, node.default, ctx)
@@ -285,6 +301,7 @@ BASE_RULES: tuple[Rule, ...] = (
     duplicate_case_values,
     count_field,
     duplicate_domain_values,
+    string_bits,
     integer_default,
     scalar_default,
     *ref_tag_mismatch,

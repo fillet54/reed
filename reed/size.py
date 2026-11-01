@@ -18,7 +18,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from .ir import Array, Icd, Int, LayoutPolicy, Message, MessageRef, MsgKey, Scaled, Spare, Struct, Union
+from .ir import STRING_LENGTH_BITS, VARIABLE, Array, Icd, Int, LayoutPolicy, Message, MessageRef, MsgKey, Scaled, Spare, String, Struct, Union
 from .paths import Stack, children, field_path, push, resolve, root_stack
 
 
@@ -123,6 +123,11 @@ class Sizer:
         node = stack[-1].node
 
         if isinstance(node, (Int, Scaled, Spare)):
+            return Size.fixed(node.bits)
+
+        if isinstance(node, String):
+            if node.bits is VARIABLE:
+                return Size(STRING_LENGTH_BITS, STRING_LENGTH_BITS + 255 * 8)
             return Size.fixed(node.bits)
 
         if isinstance(node, Struct):

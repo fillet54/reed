@@ -7,7 +7,7 @@ children list the legal values. Fields use it with
 Unions keyed by a system ID have cases that follow that same hierarchy.
 
 Also: <group2> is another spelling of <group>, <commandkey> (the unique key
-field) is an <integer>, and a command with
+field) and <mpmCheck> (a checksum field) are <integer>s, and a command with
 protocolled="false" limits its whole message to 50 bytes.
 
 Words are 16 bits: every message is a whole number of words, the rest of the
@@ -33,6 +33,8 @@ class ExampleLowering(Lowering):
     lower_group2 = Lowering.lower_group
     # <commandkey> (used for the unique key field) is an <integer>.
     lower_commandkey = Lowering.lower_integer
+    # <mpmCheck> (a checksum field) is an <integer>.
+    lower_mpmCheck = Lowering.lower_integer
 
     def lower_type_subsystemDef(self, elem: ET.Element) -> Struct:
         """The definition: the ID's layout and its legal values."""

@@ -49,6 +49,7 @@ from .ir import (
     Node,
     Scaled,
     Spare,
+    String,
     Struct,
     Union,
 )
@@ -154,8 +155,8 @@ class _FromUnion:
 
     def integer(self, node: Int, scopes: tuple, names: tuple) -> Int:
         enum = node.enum
-        if enum is None or not enum.from_union:
-            return node
+        if enum is None or not enum.from_union or enum.from_union.startswith("#"):
+            return node  # "#id" was resolved when lowered
         for scope in reversed(scopes):
             for f in scope.fields:
                 if isinstance(f, Union) and f.name == enum.from_union:
@@ -450,6 +451,12 @@ class Lowering:
             default=self.default(elem, None, scaled=True),
         )
 
+    def lower_string(self, elem):
+        bits = self.bits(elem)
+        if bits is None:
+            self.required(elem, "bitCount")  # raises
+        return String(self.field_name(elem), bits, meta=self.meta(elem))
+
     def lower_spare(self, elem):
         return Spare(self.fixed_bits(elem))
 
@@ -464,9 +471,14 @@ class Lowering:
         return struct
 
     def lower_union(self, elem):
+        discrim = elem.get("discrimField")
+        if discrim is None:
+            if not self.catalog.in_progress:  # only fieldDefs may leave it to the use
+                self.required(elem, "discrimField")  # raises
+            discrim = ""
         return Union(
             elem.get("name", ""),
-            self.required(elem, "discrimField"),
+            discrim,
             tuple(case for c in elem if _tag(c) not in META_TAGS for case in self.cases(c)),
             meta=self.meta(elem),
         )
@@ -691,17 +703,31 @@ class Lowering:
         nv = elem.find("namedValues")
         if nv is None:
             return None
-        from_union = nv.get("fromUnion", "")
-        if from_union:
-            self.catalog.from_union = True
-        return Enum(
-            tuple(
-                NamedValue(self.required(v, "name"), _int(self.required(v, "value")))
-                for v in nv
-            ),
-            restrict=self.flag(nv, "restrict"),
-            from_union=from_union,
+        values = tuple(
+            NamedValue(self.required(v, "name"), _int(self.required(v, "value"))) for v in nv
         )
+        from_union = nv.get("fromUnion", "")
+        if from_union.startswith("#"):
+            values = self.union_def_values(nv, from_union) + values
+        elif from_union:
+            self.catalog.from_union = True  # filled in per message
+        return Enum(values, restrict=self.flag(nv, "restrict"), from_union=from_union)
+
+    def union_def_values(self, nv: ET.Element, from_union: str) -> tuple[NamedValue, ...]:
+        """fromUnion="#id": the cases of union fieldDef `id` (or `#alias:id`)."""
+        module, key = self.module_for(from_union[1:])
+        where = f"namedValues fromUnion {from_union!r}"
+        if key not in module.def_elems:
+            self.warn("from-union-not-found", nv, f"{where}: no fieldDef with id {key!r}")
+            return ()
+        tag = _tag(module.def_elems[key])
+        if tag != "union":
+            self.warn(
+                "from-union-not-found", nv, f"{where}: fieldDef {key!r} is a <{tag}>, not a <union>"
+            )
+            return ()
+        union = module.field_def(key)
+        return tuple(NamedValue(c.name, c.value) for c in union.cases if isinstance(c.value, int))
 
     def default(self, elem: ET.Element, enum: Enum | None, scaled: bool = False):
         """<default>: a number, or for an integer a name from its named values."""

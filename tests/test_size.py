@@ -175,6 +175,16 @@ def test_default_case_counts_in_the_union_size():
     assert (size.lo, size.hi) == (16, 38)
 
 
+def test_fixed_string_size():
+    assert message_size('<string name="s" bitCount="64"/>') == Size.fixed(64)
+
+
+def test_variable_string_is_a_length_byte_and_up_to_255_characters():
+    size = message_size('<string name="s" bitCount="variable"/>')
+
+    assert (size.lo, size.hi) == (8, 8 + 255 * 8)
+
+
 # --- word padding -----------------------------------------------------------
 
 

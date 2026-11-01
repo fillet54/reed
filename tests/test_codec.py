@@ -147,6 +147,64 @@ def test_restricted_enum_rejects_other_numbers():
         decode(msg, bytes.fromhex("c000"), icds)
 
 
+# --- strings ----------------------------------------------------------------
+
+
+def test_fixed_string_is_padded_with_zeros():
+    data = roundtrip('<string name="s" bitCount="48"/>', {"s": "hi"})
+
+    assert data == b"hi\0\0\0\0"
+
+
+def test_fixed_string_that_fills_the_field_has_no_terminator():
+    assert roundtrip('<string name="s" bitCount="32"/>', {"s": "abcd"}) == b"abcd"
+
+
+def test_fixed_string_too_long_is_an_error():
+    msg, icds = message('<string name="s" bitCount="32"/>')
+
+    with pytest.raises(CodecError, match="m/s: 'abcde' is 5 characters; the field holds 4"):
+        encode(msg, {"s": "abcde"}, icds)
+
+
+def test_variable_string_is_a_length_byte_then_characters():
+    assert roundtrip('<string name="s" bitCount="variable"/>', {"s": "abc"}) == b"\x03abc"
+
+
+def test_variable_string_is_not_aligned():
+    data = roundtrip(
+        '<string name="s" bitCount="variable"/><integer name="a" bitCount="8"/>',
+        {"s": "a", "a": 0xFF},
+    )
+
+    assert data == b"\x01a\xff\x00"  # the last byte is the message's implicit spare
+
+
+def test_empty_variable_string():
+    assert roundtrip('<string name="s" bitCount="variable"/>', {"s": ""}) == b"\x00\x00"
+
+
+def test_variable_string_longer_than_255_is_an_error():
+    msg, icds = message('<string name="s" bitCount="variable"/>')
+
+    with pytest.raises(CodecError, match="m/s: 256 characters; a variable string holds at most 255"):
+        encode(msg, {"s": "x" * 256}, icds)
+
+
+def test_string_value_must_be_a_str():
+    msg, icds = message('<string name="s" bitCount="32"/>')
+
+    with pytest.raises(CodecError, match="m/s: expected a string, got 5"):
+        encode(msg, {"s": 5}, icds)
+
+
+def test_character_that_is_not_one_byte_is_an_error():
+    msg, icds = message('<string name="s" bitCount="32"/>')
+
+    with pytest.raises(CodecError, match="m/s: 'π' is not a one-byte character"):
+        encode(msg, {"s": "π"}, icds)
+
+
 # --- defaults ---------------------------------------------------------------
 
 
@@ -359,6 +417,18 @@ def test_default_case_cannot_use_another_cases_value():
 
     with pytest.raises(CodecError, match="m/id: 2 belongs to case 'big', not the default case"):
         encode(msg, {"id": 2, "body": {"default": {}}}, icds)
+
+
+def test_union_without_a_discrim_field_is_an_error():
+    msg, icds = message(
+        '<union name="body" ref="U"/>',
+        defs='<union id="U"><command name="a" discrimValue="1"/></union>',
+    )
+
+    with pytest.raises(CodecError, match="m/body: union has no discrimField"):
+        encode(msg, {"body": {"a": {}}}, icds)
+    with pytest.raises(CodecError, match="m/body: union has no discrimField"):
+        decode(msg, bytes.fromhex("0000"), icds)
 
 
 # --- arrays -----------------------------------------------------------------

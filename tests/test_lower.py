@@ -17,6 +17,7 @@ from reed.ir import (
     NamedValue,
     Scaled,
     Spare,
+    String,
     Struct,
     Union,
 )
@@ -141,6 +142,28 @@ def test_scalar_signed():
 def test_scalar_signed_must_be_true_or_false():
     with pytest.raises(LoweringError, match="signed.*'yes'"):
         lower_field('<scalar name="v" bitCount="8" signed="yes"/>')
+
+
+# --- string -----------------------------------------------------------------
+
+
+def test_fixed_string():
+    assert lower_field('<string name="s" bitCount="64"/>') == String("s", 64)
+
+
+def test_variable_string():
+    assert lower_field('<string name="s" bitCount="variable"/>') == String("s", VARIABLE)
+
+
+def test_string_needs_a_bit_count():
+    with pytest.raises(LoweringError, match="missing required attribute 'bitCount' on <string name='s'>"):
+        lower_field('<string name="s"/>')
+
+
+def test_string_can_be_a_field_def():
+    field = lower_field('<string name="callsign" ref="name"/>', defs='<string id="name" bitCount="32"/>')
+
+    assert (field.name, field.bits) == ("callsign", 32)
 
 
 # --- spare ------------------------------------------------------------------
@@ -786,6 +809,86 @@ def test_unknown_from_union_is_a_warning():
     (issue,) = icd.issues
     assert (issue.code, issue.path) == ("from-union-not-found", "m/id")
     assert issue.message == "namedValues fromUnion 'Nope': no union of that name encloses this field"
+
+
+# --- unions as fieldDefs; fromUnion="#id" ------------------------------------
+
+
+UNION_DEF = (
+    '<union id="CmdUnion">'
+    '<command name="power" discrimValue="1"><spare bitCount="8"/></command>'
+    '<command name="ibit" discrimValue="2"/>'
+    "</union>"
+)
+
+
+def test_union_field_def_needs_no_discrim_field():
+    _, body = lower_fields(
+        '<integer name="id" bitCount="8"/><union name="body" ref="CmdUnion" discrimField="../id"/>',
+        defs=UNION_DEF,
+    )
+
+    assert isinstance(body, Union)
+    assert (body.name, body.discrim) == ("body", "../id")
+    assert [c.name for c in body.cases] == ["power", "ibit"]
+
+
+def test_union_nested_in_a_group_def_needs_no_discrim_field():
+    field = lower_field(
+        '<group name="g" ref="g"/>',
+        defs='<group id="g"><union name="u"><command name="a" discrimValue="1"/></union></group>',
+    )
+
+    assert field.fields[0].discrim == ""
+
+
+def test_union_in_a_message_still_needs_a_discrim_field():
+    with pytest.raises(LoweringError, match="missing required attribute 'discrimField'"):
+        lower_field('<union name="body"><command name="a" discrimValue="1"/></union>')
+
+
+def test_from_union_by_id_uses_the_union_field_def():
+    field = lower_field(
+        '<integer name="command_id" bitCount="16">'
+        '<namedValues fromUnion="#CmdUnion" restrict="true"/></integer>',
+        defs=UNION_DEF,
+    )
+
+    assert field.enum == Enum(
+        (NamedValue("power", 1), NamedValue("ibit", 2)), restrict=True, from_union="#CmdUnion"
+    )
+
+
+def test_from_union_by_id_in_a_shared_def():
+    field = lower_field(
+        '<group name="header" ref="hdr"/>',
+        defs=UNION_DEF + '<group id="hdr"><integer name="id" bitCount="8">'
+        '<namedValues fromUnion="#CmdUnion"/></integer></group>',
+    )
+
+    assert [v.name for v in field.fields[0].enum.values] == ["power", "ibit"]
+
+
+def test_from_union_by_unknown_id_is_a_warning():
+    icd = lower_string(
+        "<icd>\n"
+        '<message name="m"><integer name="id" bitCount="8">\n'
+        '<namedValues fromUnion="#Nope"/></integer></message></icd>'
+    )
+
+    (issue,) = icd.issues
+    assert (issue.code, issue.path) == ("from-union-not-found", "line 3")
+    assert issue.message == "namedValues fromUnion '#Nope': no fieldDef with id 'Nope'"
+
+
+def test_from_union_by_id_of_a_non_union_is_a_warning():
+    icd = lower_string(
+        '<icd><fieldDefs><group id="hdr"><spare bitCount="8"/></group></fieldDefs>'
+        '<message name="m"><integer name="id" bitCount="8">'
+        '<namedValues fromUnion="#hdr"/></integer></message></icd>'
+    )
+
+    assert icd.issues[0].message == "namedValues fromUnion '#hdr': fieldDef 'hdr' is a <group>, not a <union>"
 
 
 # --- imports: refSchemaLocation ---------------------------------------------

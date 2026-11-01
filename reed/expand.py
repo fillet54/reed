@@ -91,6 +91,8 @@ def matches_message(pattern: str, alias: str, name: str) -> bool:
 
 
 def is_listed(union: Union, stack: Stack, patterns, alias: str) -> bool:
+    if not union.discrim:
+        return False
     target = resolve(union.discrim, stack)
     return target is not None and any(matches(p, alias, target.names) for p in patterns)
 
@@ -213,7 +215,7 @@ def unused_patterns(icds: Mapping[str, Icd], patterns: tuple[str, ...]) -> list[
         for message in icd.messages:
             present.update(p for p in patterns if matches_message(p, icd.alias, message.name))
             for union, stack in _all_unions(root_stack(message.body, message.name)):
-                target = resolve(union.discrim, stack)
+                target = resolve(union.discrim, stack) if union.discrim else None
                 if target is not None:
                     used.update(p for p in patterns if matches(p, icd.alias, target.names))
 

@@ -191,6 +191,39 @@ def test_command_key_is_not_part_of_the_base_lowering():
         )
 
 
+# --- mpmCheck: an integer (a checksum field) --------------------------------
+
+
+def test_mpm_check_lowers_like_integer():
+    (field,) = lower_fields('<mpmCheck name="checksum" bitCount="16"/>')
+
+    assert field == Int("checksum", 16)
+
+
+def test_mpm_check_keeps_integer_options():
+    (field,) = lower_fields(
+        '<mpmCheck name="checksum" bitCount="16"><label>Checksum</label>'
+        "<default>0</default></mpmCheck>"
+    )
+
+    assert field == Int("checksum", 16, meta=Meta(label="Checksum"), default=0)
+
+
+def test_mpm_check_can_be_a_field_def():
+    icd = lower_string(
+        '<icd><fieldDefs><mpmCheck id="check" bitCount="16"/></fieldDefs>'
+        '<message name="m"><mpmCheck name="checksum" ref="check"/></message></icd>',
+        lowering=ExampleLowering,
+    )
+
+    assert icd.messages[0].body.fields == (Int("checksum", 16, meta=Meta(origin=("", "check"))),)
+
+
+def test_mpm_check_is_not_part_of_the_base_lowering():
+    with pytest.raises(LoweringError, match="unknown element <mpmCheck>"):
+        lower_string('<icd><message name="m"><mpmCheck name="c" bitCount="16"/></message></icd>')
+
+
 # --- protocolled commands: a dialect-specific rule --------------------------
 
 

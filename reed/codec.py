@@ -4,6 +4,7 @@ Values mirror the message:
 - a group is a dict of its fields (spares are left out);
 - an integer is an int, or a name from its named values;
 - a scalar is a number: engineering value = raw × scale + offset;
+- a string is a str, one Latin-1 byte per character;
 - a union is `{case_name: case_value}`; an unnamed union's case name appears
   directly in the enclosing dict;
 - an array is a list of element dicts;
@@ -27,7 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from .ir import DEFAULT, Array, Icd, Int, LayoutPolicy, Message, MessageRef, Scaled, Spare, Struct, Union
+from .ir import DEFAULT, STRING_LENGTH_BITS, VARIABLE, Array, Icd, Int, String, LayoutPolicy, Message, MessageRef, Scaled, Spare, Struct, Union
 from .paths import Frame, Stack, children, field_path, push, resolve
 from .size import find_message, layout_of
 
@@ -90,6 +91,8 @@ class _Encoder:
 
         if isinstance(node, (Int, Scaled, Spare)):
             self.leaves.append((frame, value))
+        elif isinstance(node, String):
+            self.leaves.append((frame, _string(node, value, frame)))
         elif isinstance(node, Struct):
             self.struct(stack, value)
         elif isinstance(node, Union):
@@ -137,6 +140,8 @@ class _Encoder:
         (name, case_value), = value.items()
         index = names.index(name)
         case = node.cases[index]
+        if not node.discrim:
+            raise CodecError(f"{_path(frame)}: union has no discrimField")
 
         target = resolve(node.discrim, stack)
         if target is None:
@@ -175,7 +180,7 @@ class _Encoder:
         self.collect((Frame(target.body, frame.index, frame.names),), value)
 
         # ...and fills whole words of its own.
-        used = sum(f.node.bits for f, _ in self.leaves[start:])
+        used = sum(_leaf_bits(f, v) for f, v in self.leaves[start:])
         layout = layout_of(self.icds, target)
         pad = -used % layout.word_bits if layout.pad else 0
         if pad:
@@ -194,6 +199,11 @@ class _Encoder:
     def emit(self) -> tuple[int, int]:
         bits = nbits = 0
         for frame, value in self.leaves:
+            if isinstance(value, _Packed):  # already bits (strings)
+                bits = (bits << value.nbits) | value.raw
+                nbits += value.nbits
+                continue
+
             node = frame.node
             derived = self.derived.get(frame.index)
 
@@ -227,6 +237,45 @@ class _Encoder:
             nbits += node.bits
 
         return bits, nbits
+
+
+class _Packed:
+    """A leaf turned into its bits up front, e.g. a string of some length."""
+
+    __slots__ = ("nbits", "raw")
+
+    def __init__(self, nbits: int, raw: int):
+        self.nbits, self.raw = nbits, raw
+
+
+def _leaf_bits(frame: Frame, value) -> int:
+    return value.nbits if isinstance(value, _Packed) else frame.node.bits
+
+
+def _string(node: String, value, frame: Frame) -> _Packed:
+    if value is MISSING:
+        raise CodecError(f"{_path(frame)}: missing")
+    if not isinstance(value, str):
+        raise CodecError(f"{_path(frame)}: expected a string, got {value!r}")
+    try:
+        data = value.encode("latin-1")
+    except UnicodeEncodeError as e:
+        raise CodecError(f"{_path(frame)}: {e.object[e.start]!r} is not a one-byte character")
+
+    if node.bits is VARIABLE:
+        if len(data) > 255:
+            raise CodecError(
+                f"{_path(frame)}: {len(data)} characters; a variable string holds at most 255"
+            )
+        data = bytes([len(data)]) + data
+    else:
+        size = node.bits // 8
+        if len(data) > size:
+            raise CodecError(
+                f"{_path(frame)}: {value!r} is {len(data)} characters; the field holds {size}"
+            )
+        data = data.ljust(size, b"\0")
+    return _Packed(len(data) * 8, int.from_bytes(data, "big"))
 
 
 def _to_raw(node, value, frame: Frame, restrict: bool = True) -> int:
@@ -299,6 +348,8 @@ class _Decoder:
             return MISSING
         if isinstance(node, (Int, Scaled)):
             return self.leaf(frame)
+        if isinstance(node, String):
+            return self.string(frame)
         if isinstance(node, Struct):
             return self.struct(stack)
         if isinstance(node, Union):
@@ -337,6 +388,17 @@ class _Decoder:
                 raise CodecError(f"{_path(frame)}: {raw} is not one of the named values")
         return raw
 
+    def string(self, frame: Frame) -> str:
+        node: String = frame.node
+        if node.bits is VARIABLE:
+            size = self.reader.read(STRING_LENGTH_BITS, frame)
+        else:
+            size = node.bits // 8
+        data = self.reader.read(size * 8, frame).to_bytes(size, "big")
+        if node.bits is not VARIABLE:
+            data = data.split(b"\0", 1)[0]
+        return data.decode("latin-1")
+
     def struct(self, stack: Stack) -> dict:
         result = {}
         for child in children(stack[-1]):
@@ -353,6 +415,8 @@ class _Decoder:
     def union(self, stack: Stack) -> dict:
         frame = stack[-1]
         node: Union = frame.node
+        if not node.discrim:
+            raise CodecError(f"{_path(frame)}: union has no discrimField")
         discrim = self.number_at(resolve(node.discrim, stack), frame, "discrimField")
 
         fallback = None

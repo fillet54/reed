@@ -162,6 +162,31 @@ def test_two_default_cases_is_an_error():
     ) == [("error", "duplicate-case-value", "m/body")]
 
 
+# --- strings ----------------------------------------------------------------
+
+
+def test_fixed_string_must_be_whole_words():
+    assert issues('<string name="s" bitCount="24"/>') == [("error", "string-bits", "m/s")]
+
+
+def test_string_of_whole_words_is_fine():
+    assert issues('<string name="s" bitCount="32"/>') == []
+
+
+def test_variable_string_needs_no_alignment():
+    assert issues('<string name="s" bitCount="variable"/><spare bitCount="8"/>') == []
+
+
+# --- unions without a discriminator ------------------------------------------
+
+
+def test_union_def_used_without_a_discrim_field_is_an_error():
+    assert issues(
+        '<union name="body" ref="U"/>',
+        defs='<union id="U"><command name="a" discrimValue="1"/></union>',
+    ) == [("error", "missing-discrim", "m/body")]
+
+
 # --- whole words ------------------------------------------------------------
 
 
