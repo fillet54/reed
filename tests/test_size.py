@@ -2,16 +2,19 @@
 
 import math
 
+from reed.dialect import Dialect
+from reed.ir import LayoutPolicy
 from reed.lower import lower_many, lower_string
 from reed.size import Linear, Size, size_of
 
 
-def message_size(body: str, defs: str = "", extra: str = "", **kwargs) -> Size:
+def message_size(body: str, defs: str = "", extra: str = "", padded=False, **kwargs) -> Size:
+    """Size of message "m". Unpadded by default: most tests are about the fields."""
     icd = lower_string(
         f"<icd><fieldDefs>{defs}</fieldDefs>"
         f'<message name="m">{body}</message>{extra}</icd>'
     )
-    return size_of(icd.messages[0], icds={icd.namespace: icd}, **kwargs)
+    return size_of(icd.messages[0], icds={icd.namespace: icd}, padded=padded, **kwargs)
 
 
 # --- fixed sizes ------------------------------------------------------------
@@ -140,6 +143,16 @@ def test_message_ref_has_the_size_of_its_target():
     assert size == Size.fixed(24)
 
 
+def test_carried_message_is_padded_to_a_whole_word():
+    # A carried message is a message: its 4 bits take a whole 16-bit word.
+    size = message_size(
+        '<spare bitCount="8"/><group name="inner" ref="other"/>',
+        extra='<message name="other"><spare bitCount="4"/></message>',
+    )
+
+    assert size == Size.fixed(24)
+
+
 def test_message_ref_into_another_icd_uses_icds():
     icds = lower_many(
         [
@@ -150,6 +163,68 @@ def test_message_ref_into_another_icd_uses_icds():
     )
 
     assert size_of(icds["urn:a"].messages[0], icds=icds) == Size.fixed(16)
+
+
+# --- word padding -----------------------------------------------------------
+
+
+def test_message_is_padded_to_a_whole_word():
+    body = '<integer name="a" bitCount="53"/>'
+
+    assert message_size(body, padded=True) == Size.fixed(64)
+    assert message_size(body) == Size.fixed(53)
+
+
+def test_padding_is_the_default():
+    icd = lower_string('<icd><message name="m"><spare bitCount="1"/></message></icd>')
+
+    assert size_of(icd.messages[0]) == Size.fixed(16)
+
+
+def test_padding_rounds_up_both_bounds():
+    size = message_size(ARRAY, padded=True)  # 4 + 8·n, n up to 15
+
+    assert (size.lo, size.hi) == (16, 128)
+    assert size.linear is None  # rounding up isn't linear
+
+
+def test_padding_keeps_a_formula_made_of_whole_words():
+    body = (
+        '<integer name="n" bitCount="16"/>'
+        '<group name="items" countValue="../n"><spare bitCount="32"/></group>'
+    )
+
+    assert message_size(body, padded=True) == message_size(body)
+
+
+def test_unbounded_stays_unbounded():
+    size = message_size(
+        '<group name="items" countValue="nope"><spare bitCount="8"/></group>', padded=True
+    )
+
+    assert size.hi == math.inf
+
+
+def dialect_size(layout: LayoutPolicy, body: str, extra: str = "") -> Size:
+    icds = Dialect("test", layout=layout).lower(
+        [f'<icd><message name="m">{body}</message>{extra}</icd>']
+    )
+    return size_of(icds[""].messages[0], icds)
+
+
+def test_word_size_comes_from_the_dialect_layout():
+    assert dialect_size(LayoutPolicy(word_bits=32), '<spare bitCount="8"/>') == Size.fixed(32)
+
+
+def test_no_implicit_spare_without_padding():
+    layout = LayoutPolicy(pad=False)
+
+    assert dialect_size(layout, '<spare bitCount="8"/>') == Size.fixed(8)
+    assert dialect_size(
+        layout,
+        '<spare bitCount="8"/><group name="inner" ref="other"/>',
+        extra='<message name="other"><spare bitCount="4"/></message>',
+    ) == Size.fixed(12)
 
 
 # --- display ----------------------------------------------------------------

@@ -14,6 +14,9 @@ dependencies = []
 docs = ["docutils>=0.20", "sphinx>=7.3"]
 test = ["pytest>=8"]
 
+[project.scripts]
+reed = "reed.__main__:main"
+
 [tool.setuptools]
 packages = ["reed", "reed.dialects"]
 

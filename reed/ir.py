@@ -32,8 +32,15 @@ VARIABLE = _Variable()
 
 @dataclass(frozen=True, slots=True)
 class LayoutPolicy:
+    """How messages sit in words. Set per dialect; the XML has no syntax for it.
+
+    Bits are always packed MSB-first: the first field is in the high bits.
+    """
+
     word_bits: int = 16
-    msb_first: bool = True  # bit 15 is the first bit of a word
+    byteorder: str = "big"  # byte order within a word: "big" or "little"
+    pad: bool = True  # fill a message's last word with an implicit spare;
+    #                   if False, every message must be whole words itself
     max_bits: int = 512 * 8
 
 

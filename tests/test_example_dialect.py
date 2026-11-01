@@ -177,6 +177,21 @@ def test_protocolled_command_can_be_larger():
     )
 
 
+def test_unprotocolled_limit_counts_the_implicit_spare():
+    # 16 + 385 = 401 bits, padded to 416: over the limit even though 401 rounds to 51 bytes.
+    # 16 + 384 = 400 is exactly 25 words and fine (see above).
+    assert command_issues(
+        '<command name="big" discrimValue="1" protocolled="false"><spare bitCount="370"/>'
+        '<spare bitCount="15"/></command>'
+    ) == [("error", "unprotocolled-too-large", "m/body/big")]
+
+
+def test_example_words_are_16_bits():
+    icds = EXAMPLE.lower(['<icd><message name="m"/></icd>'])
+
+    assert icds[""].layout.word_bits == 16
+
+
 def test_limit_only_counts_the_chosen_command():
     # A large sibling case doesn't count against the small unprotocolled one.
     assert (

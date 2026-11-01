@@ -1,0 +1,101 @@
+"""Command line: `reed check FILE...`."""
+
+from __future__ import annotations
+
+import argparse
+import resource
+import sys
+import time
+
+from . import dialects
+from .ir import Union
+from .lower import LoweringError
+from .size import size_of
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="reed")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    check = commands.add_parser("check", help="lower and validate ICD files")
+    check.add_argument("files", nargs="+", help="ICD XML files (all imports together)")
+    check.add_argument("--dialect", choices=dialects.NAMES, default="base")
+    check.add_argument("--sizes", action="store_true", help="print message and case sizes")
+    check.add_argument("--stats", action="store_true", help="print time and peak memory")
+
+    args = parser.parse_args(argv)
+    return run_check(args)
+
+
+def run_check(args) -> int:
+    dialect = dialects.get(args.dialect)
+    started = time.perf_counter()
+
+    try:
+        sources = [read(path) for path in args.files]
+        icds = dialect.lower(sources, names=args.files)
+    except (OSError, LoweringError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    lowered = time.perf_counter()
+    issues = dialect.validate(icds)
+    validated = time.perf_counter()
+
+    for issue in issues:
+        print(issue)
+
+    if args.sizes:
+        print_sizes(icds)
+
+    messages = sum(len(icd.messages) for icd in icds.values())
+    errors = sum(1 for i in issues if i.severity == "error")
+    warnings = len(issues) - errors
+    print(
+        f"{plural(messages, 'message')}, {plural(errors, 'error')}, "
+        f"{plural(warnings, 'warning')}"
+    )
+
+    if args.stats:
+        peak_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+        print(
+            f"lowered in {lowered - started:.2f}s, validated in {validated - lowered:.2f}s, "
+            f"peak memory {peak_mb:.0f} MB"
+        )
+
+    return 1 if errors else 0
+
+
+def read(path: str) -> str:
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def print_sizes(icds) -> None:
+    for icd in icds.values():
+        for message in icd.messages:
+            print(f"{message.name}  {describe_size(message, icds)}")
+            for field in message.body.fields:
+                if isinstance(field, Union):
+                    for case in field.cases:
+                        size = describe_size(message, icds, choose={id(field): case})
+                        print(f"  {case.name}  {size}")
+
+
+def describe_size(message, icds, choose=None) -> str:
+    """The padded size, plus the bits the fields use when they differ."""
+    padded = size_of(message, icds, choose)
+    used = size_of(message, icds, choose, padded=False)
+    if used == padded:
+        return str(padded)
+    if used.is_fixed:
+        return f"{padded} ({used.lo} used)"
+    return f"{padded} ({used} used)"
+
+
+def plural(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+if __name__ == "__main__":
+    sys.exit(main())

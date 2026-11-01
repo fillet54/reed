@@ -23,6 +23,7 @@ from .ir import (
     Enum,
     Icd,
     Int,
+    LayoutPolicy,
     Message,
     MessageRef,
     Meta,
@@ -60,16 +61,50 @@ def lower_string(text: str, lowering: type[Lowering] | None = None) -> Icd:
 
 
 def lower_many(
-    sources: Iterable[str | ET.Element], lowering: type[Lowering] | None = None
+    sources: Iterable[str | ET.Element],
+    lowering: type[Lowering] | None = None,
+    names: Iterable[str] | None = None,
+    layout: LayoutPolicy | None = None,
 ) -> dict[str, Icd]:
-    """Lower several ICD files, keyed by the namespace uri each one declares."""
+    """Lower several ICD files, keyed by the namespace uri each one declares.
+
+    `names` (e.g. file paths) prefix error messages from the matching source.
+    `layout` (from the dialect) is given to every ICD.
+    """
+    sources = list(sources)
+    names = list(names) if names is not None else [None] * len(sources)
     catalog = Catalog()
     cls = lowering or Lowering
+    name_of: dict[str, str | None] = {}
 
-    for source in sources:
-        cls(parse(source) if isinstance(source, str) else source, catalog=catalog)
+    for source, name in zip(sources, names):
+        with _blame(name):
+            root = parse(source) if isinstance(source, str) else source
+            module = cls(root, catalog=catalog, layout=layout)
+        name_of[module.namespace] = name
 
-    return {uri: module.icd() for uri, module in catalog.modules.items()}
+    icds = {}
+    for uri, module in catalog.modules.items():
+        with _blame(name_of.get(uri)):
+            icds[uri] = module.icd()
+    return icds
+
+
+class _blame:
+    """Prefix lowering and XML errors with the source name."""
+
+    def __init__(self, name: str | None):
+        self.name = name
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc is None or self.name is None:
+            return False
+        if isinstance(exc, (LoweringError, ET.ParseError)):
+            raise LoweringError(f"{self.name}: {exc}") from exc
+        return False
 
 
 class Catalog:
@@ -91,8 +126,14 @@ def _int(value: str) -> int:
 class Lowering:
     """Base lowering. Dialects subclass it and add `lower_<tag>` methods."""
 
-    def __init__(self, root: ET.Element, catalog: Catalog | None = None):
+    def __init__(
+        self,
+        root: ET.Element,
+        catalog: Catalog | None = None,
+        layout: LayoutPolicy | None = None,
+    ):
         self.root = root
+        self.layout = layout or LayoutPolicy()
         self.namespace = ""
         self.alias = ""
         self.def_elems: dict[str, ET.Element] = {}
@@ -130,7 +171,9 @@ class Lowering:
         messages = tuple(
             self.message(child) for child in self.root if _tag(child) == "message"
         )
-        return Icd(namespace=self.namespace, messages=messages, alias=self.alias)
+        return Icd(
+            namespace=self.namespace, messages=messages, alias=self.alias, layout=self.layout
+        )
 
     def message(self, elem: ET.Element) -> Message:
         name = self.required(elem, "name")

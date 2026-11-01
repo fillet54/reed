@@ -6,6 +6,9 @@ and unions keyed by a system ID whose cases follow that same hierarchy.
 
 Also: <group2> is another spelling of <group>, and a command with
 protocolled="false" limits its whole message to 50 bytes.
+
+Words are 16 bits: every message is a whole number of words, the rest of the
+last one an implicit spare.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ from dataclasses import replace
 from xml.etree import ElementTree as ET
 
 from ..dialect import Dialect
-from ..ir import Case, Domain, Int, Struct
+from ..ir import Case, Domain, Int, LayoutPolicy, Struct
 from ..lower import META_TAGS, Lowering, _int, _tag
 from ..validate import BASE_RULES, rule
 
@@ -95,4 +98,5 @@ EXAMPLE = Dialect(
     "example",
     ExampleLowering,
     BASE_RULES + (unprotocolled_command_size,),
+    layout=LayoutPolicy(word_bits=16, byteorder="big", pad=True),
 )

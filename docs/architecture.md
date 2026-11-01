@@ -48,6 +48,7 @@ XML ──parse──▶ DOM ──lower──▶ IR ──link/validate──�
   - Struct = sum of its fields; Union = min/max over its cases (no exact formula).
   - `Array` (from `countValue`) = the count's range × element size.
   - `linear` is an exact formula `a + Σ bᵢ·countᵢ` when one exists. After unions are expanded, only arrays remain variable, so expanded messages usually get an exact formula.
+- **Word padding:** with `LayoutPolicy.pad` (the default) a message fills whole words (`word_bits`, 16 in the example dialect); the rest of its last word is an implicit spare. With `pad=False` there is no implicit spare: every message must be whole words itself (`not-whole-words` error) and a carried message packs tightly. Message sizes include it (`size_of(..., padded=False)` gives the bits the fields use), and so do carried messages inside another one. Field and group sizes don't. Rounding up `a + b·n` is not linear, so a padded size keeps its formula only when every part is whole words. Limits such as `max_bits` and the 50-byte unprotocolled rule measure the padded size.
 - `LayoutPolicy.max_bits` (512 bytes) caps `hi` and bounds array counts: effective max count = (max − rest) ÷ smallest element size.
 - Validation:
   - declared size ≠ computed size → error;
@@ -63,9 +64,21 @@ One idea covers it: pick a field, list its possible values, and emit one variant
 Each dialect declares its own list of rules. Transforms rebuild only the path from the root to the change and share everything else.
 
 ### Codec
-A sequential bit cursor, with no precomputed absolute offsets (512 bytes or less makes this cheap, and arrays and unions just work).
-- **Encode** takes nested dicts, fills consts and enum names, and sets count fields from `len(list)`.
-- **Decode** dispatches on consts and discriminators and returns the bits it consumed, so carried payloads are self-delimiting.
+`reed/codec.py`: `encode(message, value, icds) -> bytes` and `decode(message, data, icds) -> dict`, using a sequential bit cursor (no precomputed offsets).
+- **Value shapes:**
+  - a group is a dict of its fields, with spares left out;
+  - an integer is an int, or a name from its named values; decoding returns the name when there is one;
+  - a scalar is a number, where engineering value = raw × scale + offset;
+  - a union is `{case: value}`; an unnamed union's case name appears directly in the enclosing dict;
+  - an array is a list;
+  - a carried message is a nested dict.
+- **Derived fields:** encoding fills discriminators from the chosen case (a tuple for a system ID) and counts from list lengths. A value given for them must agree. Decoding returns them.
+- **Layout** (`LayoutPolicy`). The dialect owns it: `Dialect(..., layout=LayoutPolicy(word_bits=16, byteorder="big", pad=True))`. The XML has no syntax for it, and tools don't take a per-call override; lowering stamps it on every `Icd` and all tools read `icd.layout`, so sizes, validation and codecs always agree.
+  - bits are packed MSB-first, so the first field is in the high bits of word 0 (no option until an ICD needs LSB-first);
+  - words are `byteorder="big"` by default;
+  - fields cross word boundaries freely;
+  - with `pad`, the message is padded with zeros to a whole word (the implicit spare), and a carried payload, being a message too, is padded to its own whole words, so the fields after it start on a word.
+- **Errors** carry the field path, e.g. `m/mode: 3 is not one of the named values`.
 
 ### Tables
 A visitor builds a plain table model: word, bit range, name path and depth, value, description, row spans. Renderers turn it into docutils (Sphinx directive), HTML or text. Word numbers after an array use the exact formula ("Word 5 + 2·N").
@@ -79,4 +92,3 @@ So the IR is cheap. The parse is the peak, and at ~5 MB real input that is fine.
 
 ## Open questions
 - Does a count field always come directly before its array?
-- Does a carried payload always start on a word boundary?

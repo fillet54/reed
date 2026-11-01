@@ -1,0 +1,387 @@
+"""Codec: Python values ⇄ packed binary messages.
+
+Values mirror the message:
+- a group is a dict of its fields (spares are left out);
+- an integer is an int, or a name from its named values;
+- a scalar is a number: engineering value = raw × scale + offset;
+- a union is `{case_name: case_value}`; an unnamed union's case name appears
+  directly in the enclosing dict;
+- an array is a list of element dicts;
+- a carried message (MessageRef) is a dict of that message's fields.
+
+Encoding fills in discriminators from the chosen case and counts from list
+lengths; a value given for them must agree. Decoding returns them.
+
+Bits are packed MSB-first into words of `layout.word_bits`, each word stored in
+`layout.byteorder`. Fields may cross word boundaries. A message always fills
+whole words: with `layout.pad` the rest of its last word is an implicit zero
+spare, for a carried message too, so fields after one start on a word. Without
+it the message must be whole words itself, and a carried one packs tightly.
+
+The layout is the one of the ICD holding the message (set by the dialect).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+
+from .ir import Array, Icd, Int, LayoutPolicy, Message, MessageRef, Scaled, Spare, Struct, Union
+from .paths import Frame, Stack, children, field_path, push, resolve
+from .size import find_message, layout_of
+
+MISSING = object()
+
+
+class CodecError(ValueError):
+    pass
+
+
+def encode(
+    message: Message,
+    value: Mapping,
+    icds: Mapping[str, Icd] | None = None,
+) -> bytes:
+    icds = icds or {}
+    layout = layout_of(icds, message)
+    encoder = _Encoder(icds)
+    encoder.collect((Frame(message.body, (), (message.name,)),), value)
+    bits, nbits = encoder.emit()
+    if not layout.pad and nbits % layout.word_bits:
+        raise CodecError(
+            f"{message.name}: {nbits} bits is not a whole number of {layout.word_bits}-bit words"
+        )
+    return _to_bytes(bits, nbits, layout)
+
+
+def decode(
+    message: Message,
+    data: bytes,
+    icds: Mapping[str, Icd] | None = None,
+) -> dict:
+    icds = icds or {}
+    layout = layout_of(icds, message)
+    bits, nbits = _from_bytes(data, layout, message.name)
+    decoder = _Decoder(icds, _Reader(bits, nbits))
+
+    value = decoder.read((Frame(message.body, (), (message.name,)),))
+
+    left = nbits - decoder.reader.pos
+    if left >= layout.word_bits or (left and not layout.pad):
+        raise CodecError(f"{message.name}: {left} bits left over after the message")
+    return value
+
+
+# --- encoding -----------------------------------------------------------------
+
+
+class _Encoder:
+    def __init__(self, icds):
+        self.icds = icds
+        self.leaves: list[tuple[Frame, object]] = []  # stream order
+        self.derived: dict[tuple, tuple[int, str]] = {}  # index -> (raw, reason)
+
+    def collect(self, stack: Stack, value) -> None:
+        frame = stack[-1]
+        node = frame.node
+
+        if isinstance(node, (Int, Scaled, Spare)):
+            self.leaves.append((frame, value))
+        elif isinstance(node, Struct):
+            self.struct(stack, value)
+        elif isinstance(node, Union):
+            self.union(stack, value)
+        elif isinstance(node, Array):
+            self.array(stack, value)
+        elif isinstance(node, MessageRef):
+            self.message_ref(stack, value)
+        else:
+            raise TypeError(f"cannot encode {type(node).__name__}")
+
+    def struct(self, stack: Stack, value) -> None:
+        frame = stack[-1]
+        if value is MISSING:
+            value = {}
+        if not isinstance(value, Mapping):
+            raise CodecError(f"{_path(frame)}: expected a dict, got {value!r}")
+
+        known = set()
+        for child in children(frame):
+            node = child.node
+            if isinstance(node, Spare):
+                self.collect(push(stack, child), 0)
+            elif isinstance(node, Union) and not node.name:
+                names = [c.name for c in node.cases]
+                known.update(names)
+                chosen = {k: value[k] for k in names if k in value}
+                self.collect(push(stack, child), chosen if chosen else MISSING)
+            else:
+                known.add(node.name)
+                self.collect(push(stack, child), value.get(node.name, MISSING))
+
+        for key in value:
+            if key not in known:
+                raise CodecError(f"{_path(frame)}: unknown field {key!r}")
+
+    def union(self, stack: Stack, value) -> None:
+        frame = stack[-1]
+        node: Union = frame.node
+        names = [c.name for c in node.cases]
+
+        if not isinstance(value, Mapping) or len(value) != 1 or next(iter(value)) not in names:
+            raise CodecError(f"{_path(frame)}: expected one of {', '.join(names)}")
+
+        (name, case_value), = value.items()
+        index = names.index(name)
+        case = node.cases[index]
+
+        target = resolve(node.discrim, stack)
+        if target is None:
+            raise CodecError(f"{_path(frame)}: discrimField {node.discrim!r} does not resolve")
+        self.derive(target, case.value, f"case {case.name!r}")
+
+        self.collect(push(stack, children(frame)[index]), case_value)
+
+    def array(self, stack: Stack, value) -> None:
+        frame = stack[-1]
+        node: Array = frame.node
+        if not isinstance(value, list):
+            raise CodecError(f"{_path(frame)}: expected a list, got {value!r}")
+
+        target = resolve(node.count, stack)
+        if target is None:
+            raise CodecError(f"{_path(frame)}: countValue {node.count!r} does not resolve")
+        self.derive(target, len(value), f"{len(value)} items")
+
+        for i, item in enumerate(value):
+            self.collect(push(stack, _item(frame, i)), item)
+
+    def message_ref(self, stack: Stack, value) -> None:
+        frame = stack[-1]
+        target = find_message(self.icds, frame.node.target)
+        if target is None:
+            raise CodecError(f"{_path(frame)}: message {frame.node.target} is not loaded")
+        # The carried message is its own scope: its paths can't reach out.
+        start = len(self.leaves)
+        self.collect((Frame(target.body, frame.index, frame.names),), value)
+
+        # ...and fills whole words of its own.
+        used = sum(f.node.bits for f, _ in self.leaves[start:])
+        layout = layout_of(self.icds, target)
+        pad = -used % layout.word_bits if layout.pad else 0
+        if pad:
+            self.leaves.append((Frame(Spare(pad), frame.index + ("pad",), frame.names), 0))
+
+    def derive(self, target: Frame, value, reason: str) -> None:
+        """Record that `target` must hold `value` (an int, or a tuple for a group)."""
+        if isinstance(target.node, Struct):
+            fields = children(target)
+            values = value if isinstance(value, tuple) else (value,)
+            for child, v in zip(fields, values):
+                self.derive(child, v, reason)
+            return
+        self.derived[target.index] = (value, reason)
+
+    def emit(self) -> tuple[int, int]:
+        bits = nbits = 0
+        for frame, value in self.leaves:
+            node = frame.node
+            derived = self.derived.get(frame.index)
+
+            if derived is not None:
+                need, reason = derived
+                if value is not MISSING and _to_raw(node, value, frame) != _to_raw(node, need, frame):
+                    raise CodecError(f"{_path(frame)}: is {value!r} but {reason} needs {need!r}")
+                value = need
+
+            if value is MISSING:
+                raise CodecError(f"{_path(frame)}: missing")
+
+            raw = 0 if isinstance(node, Spare) else _to_raw(node, value, frame)
+            bits = (bits << node.bits) | raw
+            nbits += node.bits
+
+        return bits, nbits
+
+
+def _to_raw(node, value, frame: Frame) -> int:
+    """The unsigned raw bits for a leaf value."""
+    if isinstance(node, Scaled):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise CodecError(f"{_path(frame)}: expected a number, got {value!r}")
+        number = round((value - node.offset) / node.scale)
+    else:
+        number = _int_value(node, value, frame)
+
+    bits = node.bits
+    if node.signed:
+        lo, hi = -(1 << (bits - 1)), (1 << (bits - 1)) - 1
+    else:
+        lo, hi = 0, (1 << bits) - 1
+    if not lo <= number <= hi:
+        kind = "signed" if node.signed else "unsigned"
+        raise CodecError(f"{_path(frame)}: {number} does not fit in {bits} {kind} bits")
+
+    return number & ((1 << bits) - 1)
+
+
+def _int_value(node: Int, value, frame: Frame) -> int:
+    enum = node.enum
+    if isinstance(value, str):
+        if enum is not None:
+            for nv in enum.values:
+                if nv.name == value:
+                    return nv.value
+        raise CodecError(f"{_path(frame)}: {value!r} is not a named value")
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise CodecError(f"{_path(frame)}: expected an integer, got {value!r}")
+
+    if enum is not None and enum.restrict and value not in {nv.value for nv in enum.values}:
+        raise CodecError(f"{_path(frame)}: {value} is not one of the named values")
+    return value
+
+
+# --- decoding -----------------------------------------------------------------
+
+
+class _Reader:
+    def __init__(self, bits: int, nbits: int):
+        self.bits = bits
+        self.nbits = nbits
+        self.pos = 0
+
+    def read(self, n: int, frame: Frame) -> int:
+        if self.pos + n > self.nbits:
+            raise CodecError(f"{_path(frame)}: message ends after {self.nbits} bits")
+        shift = self.nbits - self.pos - n
+        self.pos += n
+        return (self.bits >> shift) & ((1 << n) - 1)
+
+
+class _Decoder:
+    def __init__(self, icds, reader: _Reader):
+        self.icds = icds
+        self.reader = reader
+        self.values: dict[tuple, object] = {}  # index -> decoded number
+
+    def read(self, stack: Stack):
+        frame = stack[-1]
+        node = frame.node
+
+        if isinstance(node, Spare):
+            self.reader.read(node.bits, frame)
+            return MISSING
+        if isinstance(node, (Int, Scaled)):
+            return self.leaf(frame)
+        if isinstance(node, Struct):
+            return self.struct(stack)
+        if isinstance(node, Union):
+            return self.union(stack)
+        if isinstance(node, Array):
+            return self.array(stack)
+        if isinstance(node, MessageRef):
+            target = find_message(self.icds, node.target)
+            if target is None:
+                raise CodecError(f"{_path(frame)}: message {node.target} is not loaded")
+            start = self.reader.pos
+            value = self.read((Frame(target.body, frame.index, frame.names),))
+            layout = layout_of(self.icds, target)
+            if layout.pad:
+                self.reader.read(-(self.reader.pos - start) % layout.word_bits, frame)
+            return value
+        raise TypeError(f"cannot decode {type(node).__name__}")
+
+    def leaf(self, frame: Frame):
+        node = frame.node
+        raw = self.reader.read(node.bits, frame)
+        if node.signed and raw >> (node.bits - 1):
+            raw -= 1 << node.bits
+
+        if isinstance(node, Scaled):
+            value = raw * node.scale + node.offset
+            self.values[frame.index] = value
+            return value
+
+        self.values[frame.index] = raw
+        if node.enum is not None:
+            for nv in node.enum.values:
+                if nv.value == raw:
+                    return nv.name
+            if node.enum.restrict:
+                raise CodecError(f"{_path(frame)}: {raw} is not one of the named values")
+        return raw
+
+    def struct(self, stack: Stack) -> dict:
+        result = {}
+        for child in children(stack[-1]):
+            value = self.read(push(stack, child))
+            node = child.node
+            if value is MISSING:
+                continue
+            if isinstance(node, Union) and not node.name:
+                result.update(value)
+            else:
+                result[node.name] = value
+        return result
+
+    def union(self, stack: Stack) -> dict:
+        frame = stack[-1]
+        node: Union = frame.node
+        discrim = self.number_at(resolve(node.discrim, stack), frame, "discrimField")
+
+        for i, case in enumerate(node.cases):
+            if case.value == discrim:
+                return {case.name: self.read(push(stack, children(frame)[i]))}
+        raise CodecError(f"{_path(frame)}: no case for discriminator value {discrim}")
+
+    def array(self, stack: Stack) -> list:
+        frame = stack[-1]
+        count = self.number_at(resolve(frame.node.count, stack), frame, "countValue")
+        return [self.read(push(stack, _item(frame, i))) for i in range(count)]
+
+    def number_at(self, target: Frame | None, frame: Frame, attr: str):
+        """The decoded value of a discriminator or count: an int, or a tuple for a group."""
+        if target is None:
+            raise CodecError(f"{_path(frame)}: {attr} does not resolve")
+        if isinstance(target.node, Struct):
+            return tuple(self.number_at(c, frame, attr) for c in children(target))
+        if target.index not in self.values:
+            raise CodecError(f"{_path(frame)}: {attr} {field_path(target)!r} is not decoded yet")
+        return self.values[target.index]
+
+
+# --- helpers ------------------------------------------------------------------
+
+
+def _item(frame: Frame, i: int) -> Frame:
+    """Frame for array element `i`. Each element gets its own index."""
+    return Frame(frame.node.element, frame.index + (i,), frame.names + (f"[{i}]",))
+
+
+def _path(frame: Frame) -> str:
+    return "/".join(frame.names)
+
+
+def _to_bytes(bits: int, nbits: int, layout: LayoutPolicy) -> bytes:
+    word = layout.word_bits
+    words = -(-nbits // word)
+    total = words * word
+    data = (bits << (total - nbits)).to_bytes(total // 8, "big")
+    return _swap_words(data, layout)
+
+
+def _from_bytes(data: bytes, layout: LayoutPolicy, name: str) -> tuple[int, int]:
+    word_bytes = layout.word_bits // 8
+    if len(data) % word_bytes:
+        raise CodecError(
+            f"{name}: {len(data)} bytes is not a whole number of {layout.word_bits}-bit words"
+        )
+    data = _swap_words(data, layout)
+    return int.from_bytes(data, "big"), len(data) * 8
+
+
+def _swap_words(data: bytes, layout: LayoutPolicy) -> bytes:
+    if layout.byteorder == "big":
+        return data
+    n = layout.word_bits // 8
+    return b"".join(data[i : i + n][::-1] for i in range(0, len(data), n))

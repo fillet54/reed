@@ -1,6 +1,9 @@
 """Validation: rules run over the IR and report every issue with its path."""
 
-from reed.ir import Struct
+import pytest
+
+from reed.dialect import Dialect
+from reed.ir import LayoutPolicy, Struct
 from reed.lower import lower_string
 from reed.validate import BASE_RULES, rule, validate
 
@@ -146,3 +149,36 @@ def test_extra_rules_run_alongside_base_rules():
         ("error", "bit-count", "m/h"),
         ("error", "empty-group", "m/h"),
     ]
+
+
+# --- whole words ------------------------------------------------------------
+
+
+def layout_issues(body: str, **layout):
+    dialect = Dialect("test", layout=LayoutPolicy(**layout))
+    icds = dialect.lower([f'<icd><message name="m">{body}</message></icd>'])
+    return [(i.severity, i.code, i.path) for i in dialect.validate(icds)]
+
+
+def test_without_padding_a_message_must_be_whole_words():
+    assert layout_issues('<spare bitCount="8"/>', pad=False) == [
+        ("error", "not-whole-words", "m")
+    ]
+    assert layout_issues('<spare bitCount="32"/>', pad=False) == []
+
+
+COUNTED = (
+    '<integer name="n" bitCount="{n}"/>'
+    '<group name="g" countValue="../n"><spare bitCount="{e}"/></group>'
+)
+
+
+@pytest.mark.parametrize("n, e, ok", [(8, 8, False), (8, 16, False), (16, 16, True)])
+def test_without_padding_a_variable_message_must_always_be_whole_words(n, e, ok):
+    issues = [i for i in layout_issues(COUNTED.format(n=n, e=e), pad=False) if i[1] == "not-whole-words"]
+
+    assert issues == ([] if ok else [("error", "not-whole-words", "m")])
+
+
+def test_padding_fills_any_size():
+    assert layout_issues('<spare bitCount="8"/>') == []

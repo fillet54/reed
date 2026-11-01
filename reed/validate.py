@@ -73,6 +73,7 @@ class Context:
         return Sizer(self.icds).size(frame_stack or self.stack)
 
     def message_size(self, choose: Mapping[int, Case] | None = None) -> Size:
+        """The whole message, padded to whole words."""
         return Sizer(self.icds, choose).message(self.message)
 
     def resolve(self, path: str) -> Frame | None:
@@ -146,6 +147,25 @@ def message_size(message, ctx):
         yield ctx.error("message-too-large", f"at least {size.lo} bits; the limit is {limit}")
     elif limit < size.hi < math.inf:  # inf: a count is unresolved, reported elsewhere
         yield ctx.warning("message-may-exceed", f"up to {size}; the limit is {limit} bits")
+
+
+@rule(Message)
+def whole_words(message, ctx):
+    """Without an implicit spare (layout.pad off) a message must be whole words."""
+    layout = ctx.icd.layout
+    if layout.pad:
+        return
+    word = layout.word_bits
+    size = ctx.message_size()
+
+    if size.linear is not None:
+        whole = size.linear.const % word == 0 and all(b % word == 0 for _, b in size.linear.terms)
+    else:  # no formula (cases differ): check the bounds
+        whole = size.lo % word == 0 and (size.hi == math.inf or size.hi % word == 0)
+    if not whole:
+        yield ctx.error(
+            "not-whole-words", f"{size} is not always a whole number of {word}-bit words"
+        )
 
 
 @rule(Struct)
@@ -229,6 +249,7 @@ def _check_path(ctx: Context, path: str, attr: str):
 
 BASE_RULES: tuple[Rule, ...] = (
     message_size,
+    whole_words,
     declared_bit_count,
     discriminator,
     duplicate_case_values,

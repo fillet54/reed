@@ -6,6 +6,10 @@
 resolved). `linear` is `a + Σ bᵢ·countᵢ` when the size is exactly that, which
 is the case for fixed layouts and arrays of fixed elements; unions whose cases
 differ have no formula.
+
+With `layout.pad` (the default) a message fills whole words of its ICD's
+`layout.word_bits`: what is left of the last word is an implicit spare.
+Message sizes include it, carried messages too; field and group sizes don't.
 """
 
 from __future__ import annotations
@@ -14,7 +18,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from .ir import Array, Icd, Int, Message, MessageRef, MsgKey, Scaled, Spare, Struct, Union
+from .ir import Array, Icd, Int, LayoutPolicy, Message, MessageRef, MsgKey, Scaled, Spare, Struct, Union
 from .paths import Stack, children, field_path, push, resolve, root_stack
 
 
@@ -62,6 +66,21 @@ class Size:
         linear = sizes[0].linear if len(linears) == 1 else None
         return Size(min(s.lo for s in sizes), max(s.hi for s in sizes), linear)
 
+    def padded(self, word_bits: int) -> Size:
+        """This size rounded up to whole words."""
+
+        def up(bits):
+            return bits if bits == math.inf else -(-bits // word_bits) * word_bits
+
+        linear = self.linear
+        if linear is not None and not linear.terms:
+            linear = Linear(up(linear.const))
+        elif linear is not None and (
+            linear.const % word_bits or any(b % word_bits for _, b in linear.terms)
+        ):
+            linear = None  # rounding up a + b·n isn't linear
+        return Size(up(self.lo), up(self.hi), linear)
+
     def __str__(self):
         hi = "∞" if self.hi == math.inf else str(self.hi)
         if self.is_fixed:
@@ -78,13 +97,15 @@ def size_of(
     message: Message,
     icds: Mapping[str, Icd] | None = None,
     choose: Mapping[int, object] | None = None,
+    padded: bool = True,
 ) -> Size:
-    """Size of a whole message.
+    """Size of a whole message, with its implicit spare unless `padded=False`.
 
-    `icds` (keyed by namespace) is needed to size MessageRefs. `choose` maps
-    id(union) -> case to size the message with that case selected.
+    `icds` (keyed by namespace) is needed to size MessageRefs and find the word
+    size. `choose` maps id(union) -> case to size the message with that case
+    selected.
     """
-    return Sizer(icds, choose).message(message)
+    return Sizer(icds, choose).message(message, padded)
 
 
 class Sizer:
@@ -93,8 +114,10 @@ class Sizer:
         self.choose = choose or {}
         self.active: set[MsgKey] = set()  # message refs being sized, to stop cycles
 
-    def message(self, message: Message) -> Size:
-        return self.size(root_stack(message.body, message.name))
+    def message(self, message: Message, padded: bool = True) -> Size:
+        size = self.size(root_stack(message.body, message.name))
+        layout = layout_of(self.icds, message)
+        return size.padded(layout.word_bits) if padded and layout.pad else size
 
     def size(self, stack: Stack) -> Size:
         node = stack[-1].node
@@ -160,6 +183,14 @@ def count_range(node) -> tuple[int, int] | None:
     if node.signed:
         return 0, 2 ** (node.bits - 1) - 1
     return 0, 2**node.bits - 1
+
+
+def layout_of(icds: Mapping[str, Icd], message: Message) -> LayoutPolicy:
+    """The layout of the ICD that holds `message` (the default when not loaded)."""
+    for icd in icds.values():
+        if any(m is message for m in icd.messages):
+            return icd.layout
+    return LayoutPolicy()
 
 
 def find_message(icds: Mapping[str, Icd], key: MsgKey) -> Message | None:
