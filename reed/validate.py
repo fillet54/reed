@@ -20,19 +20,9 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
 from .ir import VARIABLE, Array, Case, Domain, Icd, Int, Message, Scaled, Struct, Union
+from .issues import Issue
 from .paths import Frame, Stack, children, is_before, push, resolve, root_stack
 from .size import Size, Sizer
-
-
-@dataclass(frozen=True, slots=True)
-class Issue:
-    severity: str  # "error" | "warning"
-    code: str
-    path: str  # "command/commandBody/power"
-    message: str
-
-    def __str__(self):
-        return f"{self.severity}: {self.path}: {self.message} [{self.code}]"
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +94,7 @@ def validate(
     issues: list[Issue] = []
 
     for icd in icds.values():
+        issues += icd.issues  # found while lowering
         for message in icd.messages:
             ctx = Context(icds, icd, message, root_stack(message.body, message.name), seen)
             issues += run(rules, message, ctx)
@@ -247,6 +238,33 @@ def _check_path(ctx: Context, path: str, attr: str):
     return target
 
 
+@rule(Int)
+def integer_default(node, ctx):
+    yield from _check_default(node, node.default, ctx)
+
+
+@rule(Scaled)
+def scalar_default(node, ctx):
+    raw = None if node.default is None else round((node.default - node.offset) / node.scale)
+    yield from _check_default(node, raw, ctx)
+
+
+def _check_default(node, raw, ctx):
+    """A default must fit in the field's bits (it may be outside restricted values)."""
+    if raw is None:
+        return
+    if node.signed:
+        lo, hi = -(1 << (node.bits - 1)), (1 << (node.bits - 1)) - 1
+    else:
+        lo, hi = 0, (1 << node.bits) - 1
+    if not lo <= raw <= hi:
+        kind = "signed" if node.signed else "unsigned"
+        yield ctx.error(
+            "default-out-of-range",
+            f"default {node.default} does not fit in {node.bits} {kind} bits",
+        )
+
+
 def _ref_tag_mismatch(node, ctx):
     """A ref whose tag differs from its fieldDef's: the use's tag wins; check it should."""
     note = node.meta.prop("ref-tag-mismatch")
@@ -267,5 +285,7 @@ BASE_RULES: tuple[Rule, ...] = (
     duplicate_case_values,
     count_field,
     duplicate_domain_values,
+    integer_default,
+    scalar_default,
     *ref_tag_mismatch,
 )

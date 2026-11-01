@@ -36,9 +36,15 @@ XML ──parse──▶ DOM ──lower──▶ IR ──link/validate──�
 - Renderers link to the payload instead of repeating it. Codecs delegate to the inner module. Expansion treats it as one unit unless asked to go inside.
 
 ### Namespaces
-- `<namespace alias="example">uri</namespace>` is the file **declaring its own** namespace. There is at most one per file. It sets `Icd.namespace` (the uri) and `Icd.alias` (the prefix). `lower_many` keys each ICD by the uri it declares; two files declaring the same uri is an error.
+- `<namespace alias="example">uri</namespace>` is the file **declaring its own** namespace. The `alias` is optional and rarely used. There is at most one per file. It sets `Icd.namespace` (the uri) and `Icd.alias` (the prefix). `lower_many` keys each ICD by the uri it declares; two files declaring the same uri is an error.
 - The alias exists for convenience and documentation. Refs may use it (`ref="example:header"` resolves locally). An earlier binary ⇄ XML tool for this format used it as the element prefix in instance documents (`<example:command>`) instead of an `xmlns` declaration, so a future instance converter should do the same.
-- **Imports (not done yet):** `schemaLocation` elements at the top of a file will import other files and give each an alias, so a fieldDef or message from another file can be used (`ref="payload:header"`). They add entries to the lowering's alias table; the shared `Catalog` already holds the other loaded ICDs and detects fieldDef cycles across them.
+- **Imports:** `<refSchemaLocation alias="support">https://example.com/support-icd support-msg.xsd</refSchemaLocation>` makes `support:` mean the loaded ICD whose `<namespace>` is that uri (the `.xsd` part is ignored). Without an import line, a prefix matches a loaded ICD's own alias. `load_files` / `Dialect.load` / `reed check` find an imported file next to the importer, named after the uri's last segment (`support-icd.xml`), follow imports transitively and load each file once. If the file isn't found, a ref through the alias fails with a hint naming the expected file. All ICDs share one `Catalog`, which also catches fieldDef cycles across files.
+
+### Named values and defaults
+- `<namedValues restrict="true">` with `<namedValue name value>` children gives an integer its names; `restrict` means only those values are legal, which codecs check.
+- `<namedValues fromUnion="CommandBodyUnion">` adds the cases of that union (name → discrimValue), ahead of any listed ones. The IR keeps the union name. Lowering fills the values in per message, looking for a union of that name in the groups enclosing the field, innermost first, so a shared header fieldDef gets each message's own union. Only the path down to the field is copied. A name that matches nothing is a `from-union-not-found` warning.
+- `<default>` (a number, or an integer's named value) is used by encoders when a field is left out. A chosen case still sets its discriminator, and a given value wins. A default may be outside the restricted values (e.g. a "none" 0), but it must fit in the bits (`default-out-of-range`).
+- A ref can override `<namedValues>` and `<default>`, as with `<label>`/`<description>`.
 
 ### Paths
 `discrimField` and `countValue` resolve the same way: relative to the node that carries them. `..` is its parent, so a sibling field is `../n`. A union case is a level of its own: from a field inside a case, `..` is the case and `../..` the union. IR nodes have no parent pointers, so tools walk with a stack of the current node's parents (`reed/paths.py`).

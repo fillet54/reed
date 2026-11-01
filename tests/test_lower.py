@@ -238,6 +238,30 @@ def test_field_def_is_lowered_once_and_shared():
     assert a.fields is b.fields
 
 
+NO_ID = """<icd>
+  <fieldDefs>
+    <group name="orphan"><spare bitCount="4"/></group>
+    <group id="hdr"><spare bitCount="8"/></group>
+  </fieldDefs>
+  <message name="m"><group name="h" ref="hdr"/></message>
+</icd>"""
+
+
+def test_field_def_without_id_is_skipped_with_a_warning():
+    icd = lower_string(NO_ID)
+
+    assert icd.messages[0].body.fields[0].fields == (Spare(8),)
+    (issue,) = icd.issues
+    assert (issue.severity, issue.code, issue.path) == ("warning", "def-without-id", "line 3")
+    assert issue.message == "<group name='orphan'> in fieldDefs has no id, so nothing can ref it; skipped"
+
+
+def test_lowering_warning_names_the_file_and_line():
+    (icd,) = lower_many([NO_ID], names=["real.xml"]).values()
+
+    assert icd.issues[0].path == "real.xml:3"
+
+
 def test_field_def_can_ref_a_later_field_def():
     field = lower_field(
         '<group name="outer" ref="outer"/>',
@@ -362,8 +386,8 @@ def test_ref_with_other_children_is_an_error():
         )
 
 
-def test_ref_cannot_add_named_values():
-    with pytest.raises(LoweringError, match="not <namedValues>"):
+def test_ref_cannot_add_named_values_to_a_scalar():
+    with pytest.raises(LoweringError, match="<namedValues> only applies to integers"):
         lower_field(
             '<scalar name="v" ref="speed"><namedValues/></scalar>', defs=SPEED_DEF
         )
@@ -471,6 +495,26 @@ def test_icd_namespace_and_alias_come_from_namespace_element():
     assert (icd.namespace, icd.alias) == ("http://example.com/schema", "example")
 
 
+def test_namespace_alias_is_optional():
+    icd = lower_string("<icd><namespace>http://example.com/schema</namespace></icd>")
+
+    assert (icd.namespace, icd.alias) == ("http://example.com/schema", "")
+
+
+def test_import_works_into_an_icd_without_an_alias():
+    icds = lower_many(
+        [
+            '<icd><namespace>urn:main</namespace>'
+            '<refSchemaLocation alias="s">urn:support s.xsd</refSchemaLocation>'
+            '<message name="m"><group name="x" ref="s:XYZ"/></message></icd>',
+            '<icd><namespace>urn:support</namespace>'
+            '<fieldDefs><group id="XYZ"><spare bitCount="4"/></group></fieldDefs></icd>',
+        ]
+    )
+
+    assert icds["urn:main"].messages[0].body.fields[0].fields == (Spare(4),)
+
+
 def test_icd_without_namespace_element_has_empty_namespace():
     icd = lower_string("<icd/>")
 
@@ -531,6 +575,239 @@ def test_lower_many_rejects_duplicate_namespace():
                 '<icd><namespace alias="a2">urn:a</namespace></icd>',
             ]
         )
+
+
+# --- <default> --------------------------------------------------------------
+
+
+def test_integer_default():
+    field = lower_field('<integer name="a" bitCount="8"><default>5</default></integer>')
+
+    assert field.default == 5
+
+
+def test_integer_default_can_be_hex_or_a_named_value():
+    hex_ = lower_field('<integer name="a" bitCount="8"><default>0x1F</default></integer>')
+    named = lower_field(
+        '<integer name="a" bitCount="2"><namedValues><namedValue name="ON" value="1"/>'
+        "</namedValues><default>ON</default></integer>"
+    )
+
+    assert (hex_.default, named.default) == (0x1F, 1)
+
+
+def test_scalar_default_is_an_engineering_value():
+    field = lower_field(
+        '<scalar name="v" bitCount="8" scale="0.5"><default>2.5</default></scalar>'
+    )
+
+    assert field.default == 2.5
+
+
+def test_field_without_default_has_none():
+    assert lower_field('<integer name="a" bitCount="8"/>').default is None
+
+
+def test_default_that_is_not_a_number_or_name_is_an_error():
+    with pytest.raises(LoweringError, match="default 'lots' of <integer name='a'> is not a number"):
+        lower_field('<integer name="a" bitCount="8"><default>lots</default></integer>')
+
+
+# --- ref overrides of namedValues and default --------------------------------
+
+
+MODE_DEF = (
+    '<integer id="mode" bitCount="2"><namedValues restrict="true">'
+    '<namedValue name="OFF" value="0"/><namedValue name="ON" value="1"/>'
+    "</namedValues><default>1</default></integer>"
+)
+
+
+def test_ref_can_override_named_values():
+    field = lower_field(
+        '<integer name="m" ref="mode"><namedValues><namedValue name="AUTO" value="2"/>'
+        "</namedValues></integer>",
+        defs=MODE_DEF,
+    )
+
+    assert field.enum == Enum((NamedValue("AUTO", 2),), restrict=False)
+    assert field.default == 1  # not overridden
+
+
+def test_ref_can_override_default():
+    field = lower_field(
+        '<integer name="m" ref="mode"><default>0</default></integer>', defs=MODE_DEF
+    )
+
+    assert field.default == 0
+    assert [v.name for v in field.enum.values] == ["OFF", "ON"]
+
+
+def test_ref_default_can_name_a_def_named_value():
+    field = lower_field(
+        '<integer name="m" ref="mode"><default>OFF</default></integer>', defs=MODE_DEF
+    )
+
+    assert field.default == 0
+
+
+def test_named_values_on_a_ref_to_a_group_is_an_error():
+    with pytest.raises(LoweringError, match="<namedValues> only applies to integers"):
+        lower_field(
+            '<group name="h" ref="header"><namedValues/></group>', defs=HEADER_DEF
+        )
+
+
+# --- namedValues fromUnion ---------------------------------------------------
+
+
+FROM_UNION = (
+    '<integer name="command_id" bitCount="16">'
+    '<namedValues fromUnion="CommandBodyUnion" restrict="true"/><default>0</default></integer>'
+    '<union name="CommandBodyUnion" discrimField="../command_id">'
+    '<command name="power" discrimValue="1"/><command name="ibit" discrimValue="2"/>'
+    "</union>"
+)
+
+
+def test_named_values_from_a_union_are_its_cases():
+    command_id, _ = lower_fields(FROM_UNION)
+
+    assert command_id.enum == Enum(
+        (NamedValue("power", 1), NamedValue("ibit", 2)),
+        restrict=True,
+        from_union="CommandBodyUnion",
+    )
+    assert command_id.default == 0
+
+
+def test_from_union_keeps_listed_named_values_too():
+    command_id, _ = lower_fields(
+        FROM_UNION.replace(
+            'restrict="true"/>', 'restrict="true"><namedValue name="none" value="0"/></namedValues>'
+        )
+    )
+
+    assert [v.name for v in command_id.enum.values] == ["power", "ibit", "none"]
+
+
+def test_from_union_finds_the_union_in_an_enclosing_group():
+    # The id is in a shared header fieldDef; the union is in the message.
+    header, _ = lower_fields(
+        '<group name="header" ref="hdr"/>'
+        '<union name="Body" discrimField="../header/id">'
+        '<command name="a" discrimValue="7"/></union>',
+        defs='<group id="hdr"><integer name="id" bitCount="8">'
+        '<namedValues fromUnion="Body"/></integer></group>',
+    )
+
+    assert header.fields[0].enum.values == (NamedValue("a", 7),)
+
+
+def test_shared_def_gets_each_messages_own_union():
+    icd = lower_string(
+        '<icd><fieldDefs><group id="hdr"><integer name="id" bitCount="8">'
+        '<namedValues fromUnion="Body"/></integer></group></fieldDefs>'
+        + "".join(
+            f'<message name="{m}"><group name="header" ref="hdr"/>'
+            f'<union name="Body" discrimField="../header/id">'
+            f'<command name="{case}" discrimValue="{v}"/></union></message>'
+            for m, case, v in (("cmd", "power", 1), ("ret", "status", 9))
+        )
+        + "</icd>"
+    )
+
+    ids = [m.body.fields[0].fields[0].enum.values for m in icd.messages]
+    assert ids == [(NamedValue("power", 1),), (NamedValue("status", 9),)]
+
+
+def test_unknown_from_union_is_a_warning():
+    icd = lower_string(
+        '<icd><message name="m"><integer name="id" bitCount="8">'
+        '<namedValues fromUnion="Nope"/></integer></message></icd>'
+    )
+
+    (issue,) = icd.issues
+    assert (issue.code, issue.path) == ("from-union-not-found", "m/id")
+    assert issue.message == "namedValues fromUnion 'Nope': no union of that name encloses this field"
+
+
+# --- imports: refSchemaLocation ---------------------------------------------
+
+
+SUPPORT = (
+    '<icd><namespace alias="{alias}">https://example.com/support-icd</namespace>'
+    '<fieldDefs><group id="XYZ"><spare bitCount="4"/></group></fieldDefs>'
+    '<message name="status"/></icd>'
+)
+IMPORT = (
+    '<refSchemaLocation alias="support">'
+    "https://example.com/support-icd support-msg.xsd</refSchemaLocation>"
+)
+
+
+def main_icd(body: str, imports: str = IMPORT) -> str:
+    return (
+        f'<icd><namespace alias="main">urn:main</namespace>{imports}'
+        f'<message name="m">{body}</message></icd>'
+    )
+
+
+def test_imported_alias_resolves_to_the_icd_with_that_uri():
+    icds = lower_many(
+        [main_icd('<group name="x" ref="support:XYZ"/>'), SUPPORT.format(alias="sup")]
+    )
+
+    (x,) = icds["urn:main"].messages[0].body.fields
+    assert x.fields == (Spare(4),)
+    assert x.meta.origin == ("https://example.com/support-icd", "XYZ")
+
+
+def test_imported_message_becomes_a_message_ref():
+    icds = lower_many(
+        [main_icd('<group name="s" ref="support:status"/>'), SUPPORT.format(alias="sup")]
+    )
+
+    (s,) = icds["urn:main"].messages[0].body.fields
+    assert s == MessageRef("s", ("https://example.com/support-icd", "status"))
+
+
+def test_without_an_import_a_prefix_matches_a_loaded_icds_own_alias():
+    icds = lower_many(
+        [
+            main_icd('<group name="x" ref="support:XYZ"/>', imports=""),
+            SUPPORT.format(alias="support"),
+        ]
+    )
+
+    assert icds["urn:main"].messages[0].body.fields[0].fields == (Spare(4),)
+
+
+def test_import_order_of_files_does_not_matter():
+    icds = lower_many(
+        [SUPPORT.format(alias="sup"), main_icd('<group name="x" ref="support:XYZ"/>')]
+    )
+
+    assert icds["urn:main"].messages[0].body.fields[0].fields == (Spare(4),)
+
+
+def test_imported_icd_that_is_not_loaded_is_an_error():
+    with pytest.raises(
+        LoweringError,
+        match="alias 'support' imports 'https://example.com/support-icd', which is not "
+        r"loaded \(pass its file too, e.g. support-icd.xml\)",
+    ):
+        lower_many([main_icd('<group name="x" ref="support:XYZ"/>')])
+
+
+def test_import_needs_an_alias():
+    with pytest.raises(LoweringError, match="missing required attribute 'alias' on <refSchemaLocation>"):
+        lower_many([main_icd("", imports="<refSchemaLocation>urn:x x.xsd</refSchemaLocation>")])
+
+
+def test_import_needs_a_uri():
+    with pytest.raises(LoweringError, match="<refSchemaLocation alias='s'> has no namespace uri"):
+        lower_many([main_icd("", imports='<refSchemaLocation alias="s"/>')])
 
 
 # --- error locations --------------------------------------------------------

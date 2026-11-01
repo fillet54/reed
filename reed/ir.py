@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Union as TypingUnion
 
+from .issues import Issue
+
 # Relative path to another field, e.g. "../header/id" (discrimField, countValue).
 Path = str
 
@@ -54,6 +56,7 @@ class NamedValue:
 class Enum:
     values: tuple[NamedValue, ...]
     restrict: bool = False  # only these values are legal
+    from_union: str = ""  # values also come from this union's cases (filled in by lowering)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -79,6 +82,7 @@ class Int:
     signed: bool = False
     enum: Enum | None = None
     meta: Meta = field(default_factory=Meta)
+    default: int | None = None  # used when a codec isn't given a value
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +93,7 @@ class Scaled:
     offset: float = 0.0
     signed: bool = False  # raw bits are two's complement
     meta: Meta = field(default_factory=Meta)
+    default: float | None = None  # engineering value, used when a codec isn't given one
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,3 +178,4 @@ class Icd:
     messages: tuple[Message, ...]
     alias: str = ""  # its prefix, e.g. "example" (refs, and <example:command> instances)
     layout: LayoutPolicy = LayoutPolicy()
+    issues: tuple[Issue, ...] = ()  # warnings found while lowering

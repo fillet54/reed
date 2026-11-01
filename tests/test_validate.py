@@ -249,3 +249,22 @@ def test_dialect_alias_tags_do_not_warn():
     )
 
     assert EXAMPLE.validate(icds) == []
+
+
+# --- defaults ---------------------------------------------------------------
+
+
+def test_default_that_does_not_fit_is_an_error():
+    assert issues('<integer name="a" bitCount="4"><default>16</default></integer>') == [
+        ("error", "default-out-of-range", "m/a")
+    ]
+
+
+def test_scalar_default_that_does_not_fit_is_an_error():
+    assert issues(
+        '<scalar name="v" bitCount="4" scale="1"><default>-1</default></scalar>'
+    ) == [("error", "default-out-of-range", "m/v")]
+
+
+def test_default_that_fits_is_fine():
+    assert issues('<integer name="a" bitCount="4" signed="true"><default>-8</default></integer>') == []

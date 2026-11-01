@@ -57,6 +57,20 @@ def test_warnings_alone_exit_zero(tmp_path, capsys):
     assert "warning: m/g:" in out
 
 
+def test_lowering_warnings_are_printed(tmp_path, capsys):
+    path = write(
+        tmp_path,
+        "orphan.xml",
+        '<icd>\n<fieldDefs>\n<group name="orphan"/>\n</fieldDefs>\n<message name="m"/>\n</icd>',
+    )
+
+    code, out, _ = check(capsys, path)
+
+    assert code == 0
+    assert f"warning: {path}:3: <group name='orphan'> in fieldDefs has no id" in out
+    assert "1 message, 0 errors, 1 warning" in out
+
+
 def test_example_dialect_on_example_icd(capsys):
     code, out, _ = check(capsys, "--dialect", "example", EXAMPLE_ICD)
 

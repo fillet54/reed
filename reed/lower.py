@@ -11,9 +11,13 @@ other children are allowed. A use with overrides gets its own node, shared by
 uses with the same overrides.
 `countValue` on a ref makes an array of the def.
 
-An ICD names itself with `<namespace alias="x">uri</namespace>`; `ref="x:name"`
-with its own alias resolves locally. Imports of other files (schemaLocation)
-will add more aliases.
+An ICD names itself with `<namespace alias="x">uri</namespace>` (the alias is
+optional); `ref="x:name"` with its own alias resolves locally. Another file is imported with
+`<refSchemaLocation alias="s">uri file.xsd</refSchemaLocation>`: `s:name`
+resolves in the loaded ICD whose namespace is `uri`. Without an import, a
+prefix matches a loaded ICD's own alias. `load_files` finds imported files
+next to the importing one, named after the uri's last segment (`.../s-icd`
+-> `s-icd.xml`).
 
 `parse` records each element's source line, so a LoweringError can say where
 it is: `real.xml:123: missing required attribute 'bitCount' on <scalar ...>`.
@@ -23,6 +27,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from pathlib import Path
 from contextlib import contextmanager
 from dataclasses import replace
 from xml.etree import ElementTree as ET
@@ -46,6 +51,7 @@ from .ir import (
     Struct,
     Union,
 )
+from .issues import Issue
 
 XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
 XSI_TYPE = f"{{{XSI_NS}}}type"
@@ -54,9 +60,9 @@ XSI_TYPE = f"{{{XSI_NS}}}type"
 # Attributes that describe the use of a fieldDef rather than override it.
 USE_ATTRS = {"name", "ref", XSI_TYPE, "countValue"}
 # The only children a ref may have.
-REF_CHILDREN = ("label", "description")
+REF_CHILDREN = ("label", "description", "namedValues", "default")
 
-META_TAGS = {"label", "description", "namedValues"}
+META_TAGS = {"label", "description", "namedValues", "default"}
 
 
 class LoweringError(ValueError):
@@ -113,6 +119,66 @@ def _at(elem: ET.Element):
         raise
 
 
+class _FromUnion:
+    """Fill namedValues fromUnion="U" from union U's cases, per message.
+
+    U is looked up by name in the groups enclosing the field, innermost first,
+    so a shared fieldDef (e.g. a header with the id) gets the union of the
+    message it's used in. Only the path down to such a field is copied.
+    """
+
+    def __init__(self, lowering: Lowering):
+        self.lowering = lowering
+
+    def fill(self, node, scopes: tuple, names: tuple):
+        if isinstance(node, Int):
+            return self.integer(node, scopes, names)
+        if isinstance(node, Struct):
+            inner = scopes + (node,)
+            fields = tuple(
+                self.fill(f, inner, names + ((f.name,) if getattr(f, "name", "") else ()))
+                for f in node.fields
+            )
+            return node if _same(fields, node.fields) else replace(node, fields=fields)
+        if isinstance(node, Union):
+            cases = tuple(
+                replace(c, body=self.fill(c.body, scopes, names + (c.name,))) for c in node.cases
+            )
+            same = all(a.body is b.body for a, b in zip(cases, node.cases))
+            return node if same else replace(node, cases=cases)
+        if isinstance(node, Array):
+            element = self.fill(node.element, scopes, names)
+            return node if element is node.element else replace(node, element=element)
+        return node
+
+    def integer(self, node: Int, scopes: tuple, names: tuple) -> Int:
+        enum = node.enum
+        if enum is None or not enum.from_union:
+            return node
+        for scope in reversed(scopes):
+            for f in scope.fields:
+                if isinstance(f, Union) and f.name == enum.from_union:
+                    cases = tuple(
+                        NamedValue(c.name, c.value) for c in f.cases if isinstance(c.value, int)
+                    )
+                    return replace(node, enum=replace(enum, values=cases + enum.values))
+
+        self.lowering.issues.append(
+            Issue(
+                "warning",
+                "from-union-not-found",
+                "/".join(names),
+                f"namedValues fromUnion {enum.from_union!r}: no union of that name "
+                "encloses this field",
+            )
+        )
+        return node
+
+
+def _same(a: tuple, b: tuple) -> bool:
+    return len(a) == len(b) and all(x is y for x, y in zip(a, b))
+
+
 def _merged(elem: ET.Element, overrides, tag: str | None = None) -> ET.Element:
     """A copy of fieldDef `elem` with the use site's attributes (and tag) applied."""
     merged = _Element(tag or elem.tag, {**elem.attrib, **dict(overrides)})
@@ -132,6 +198,54 @@ def _describe(elem: ET.Element) -> str:
 def lower_string(text: str, lowering: type[Lowering] | None = None) -> Icd:
     (icd,) = lower_many([text], lowering).values()
     return icd
+
+
+def load_files(
+    paths: Iterable[str | Path],
+    lowering: type[Lowering] | None = None,
+    layout: LayoutPolicy | None = None,
+) -> dict[str, Icd]:
+    """Lower ICD files from disk, plus the files they import (transitively).
+
+    An import's file is looked for next to the importing file; if it isn't
+    there, a ref through it fails with a hint. Each file is loaded once.
+    """
+    queue = [Path(p) for p in paths]
+    seen: set[Path] = set()
+    roots, names = [], []
+
+    while queue:
+        path = queue.pop(0)
+        if path.resolve() in seen:
+            continue
+        seen.add(path.resolve())
+
+        text = path.read_text(encoding="utf-8")
+        with _blame(str(path)):
+            root = parse(text)
+        roots.append(root)
+        names.append(str(path))
+
+        for _, uri in _imports(root):
+            candidate = path.parent / f"{_file_stem(uri)}.xml"
+            if candidate.exists():
+                queue.append(candidate)
+
+    return lower_many(roots, lowering, names, layout)
+
+
+def _imports(root: ET.Element):
+    """(alias, uri) of each refSchemaLocation that has both."""
+    for child in root:
+        if _tag(child) == "refSchemaLocation":
+            parts = (child.text or "").split()
+            if child.get("alias") and parts:
+                yield child.get("alias"), parts[0]
+
+
+def _file_stem(uri: str) -> str:
+    """https://example.com/support-icd -> support-icd"""
+    return uri.rstrip("/").rsplit("/", 1)[-1]
 
 
 def lower_many(
@@ -154,7 +268,7 @@ def lower_many(
     for source, name in zip(sources, names):
         with _blame(name):
             root = parse(source) if isinstance(source, str) else source
-            module = cls(root, catalog=catalog, layout=layout)
+            module = cls(root, catalog=catalog, layout=layout, source=name)
         name_of[module.namespace] = name
 
     icds = {}
@@ -189,6 +303,7 @@ class Catalog:
 
     def __init__(self):
         self.modules: dict[str, Lowering] = {}
+        self.from_union = False  # some namedValues use fromUnion: messages need filling
         self.in_progress: list[tuple[str, str]] = []  # fieldDefs being lowered
 
 
@@ -208,9 +323,12 @@ class Lowering:
         root: ET.Element,
         catalog: Catalog | None = None,
         layout: LayoutPolicy | None = None,
+        source: str | None = None,
     ):
         self.root = root
         self.layout = layout or LayoutPolicy()
+        self.source = source  # file name, for warnings
+        self.issues: list[Issue] = []  # warnings; lowering continues
         self.namespace = ""
         self.alias = ""
         self.def_elems: dict[str, ET.Element] = {}
@@ -220,11 +338,22 @@ class Lowering:
         if len(namespaces) > 1:
             raise LoweringError("more than one <namespace> element")
         if namespaces:
-            self.alias = self.required(namespaces[0], "alias")
+            self.alias = namespaces[0].get("alias", "")  # optional; rarely used
             self.namespace = (namespaces[0].text or "").strip()
 
-        # Prefixes usable in refs. Imports (schemaLocation) will add to this.
+        # Prefixes usable in refs: its own, and its imports (alias -> uri).
         self.aliases: dict[str, Lowering] = {self.alias: self} if self.alias else {}
+        self.imports: dict[str, str] = {}
+        for child in root:
+            if _tag(child) == "refSchemaLocation":
+                alias = self.required(child, "alias")
+                parts = (child.text or "").split()
+                if not parts:
+                    raise LoweringError(
+                        f"<refSchemaLocation alias={alias!r}> has no namespace uri",
+                        line=getattr(child, "line", None),
+                    )
+                self.imports[alias] = parts[0]
 
         self.catalog = catalog or Catalog()
         if self.namespace in self.catalog.modules:
@@ -236,7 +365,14 @@ class Lowering:
         for child in root:
             if _tag(child) == "fieldDefs":
                 for d in child:
-                    self.def_elems[self.required(d, "id")] = d
+                    if not d.get("id"):
+                        self.warn(
+                            "def-without-id",
+                            d,
+                            f"{_describe(d)} in fieldDefs has no id, so nothing can ref it; skipped",
+                        )
+                        continue
+                    self.def_elems[d.get("id")] = d
             elif _tag(child) == "message":
                 self.message_names.add(self.required(child, "name"))
 
@@ -249,13 +385,19 @@ class Lowering:
             self.message(child) for child in self.root if _tag(child) == "message"
         )
         return Icd(
-            namespace=self.namespace, messages=messages, alias=self.alias, layout=self.layout
+            namespace=self.namespace,
+            messages=messages,
+            alias=self.alias,
+            layout=self.layout,
+            issues=tuple(self.issues),
         )
 
     def message(self, elem: ET.Element) -> Message:
         with _at(elem):
             name = self.required(elem, "name")
             body = Struct(name, self.fields(elem), meta=self.meta(elem))
+            if self.catalog.from_union:
+                body = _FromUnion(self).fill(body, (), (name,))
             return Message(key=(name,), body=body, namespace=self.namespace)
 
     def field(self, elem: ET.Element) -> Node:
@@ -281,12 +423,14 @@ class Lowering:
     # --- node types ---------------------------------------------------------
 
     def lower_integer(self, elem):
+        enum = self.enum(elem)
         return Int(
             self.field_name(elem),
             self.fixed_bits(elem),
             signed=self.flag(elem, "signed"),
-            enum=self.enum(elem),
+            enum=enum,
             meta=self.meta(elem),
+            default=self.default(elem, enum),
         )
 
     def lower_scalar(self, elem):
@@ -297,6 +441,7 @@ class Lowering:
             offset=float(elem.get("offset", 0)),
             signed=self.flag(elem, "signed"),
             meta=self.meta(elem),
+            default=self.default(elem, None, scaled=True),
         )
 
     def lower_spare(self, elem):
@@ -380,7 +525,22 @@ class Lowering:
             props = node.meta.props + (("ref-tag-mismatch", note),)
             node = replace(node, meta=replace(node.meta, props=props))
 
-        label, description = (elem.findtext(tag) for tag in REF_CHILDREN)
+        if elem.find("namedValues") is not None:
+            if not isinstance(node, Int):
+                raise LoweringError(
+                    f"{_describe(elem)}: <namedValues> only applies to integers, "
+                    f"and {ref!r} is a <{_tag(def_elem)}>"
+                )
+            node = replace(node, enum=self.enum(elem))
+        if elem.find("default") is not None:
+            if not isinstance(node, (Int, Scaled)):
+                raise LoweringError(
+                    f"{_describe(elem)}: <default> only applies to integers and scalars"
+                )
+            enum = node.enum if isinstance(node, Int) else None
+            node = replace(node, default=self.default(elem, enum, scaled=isinstance(node, Scaled)))
+
+        label, description = (elem.findtext(tag) for tag in ("label", "description"))
         if label is not None or description is not None:
             meta = node.meta
             node = replace(
@@ -410,9 +570,24 @@ class Lowering:
             return self, ref
 
         alias, key = ref.split(":", 1)
-        if alias not in self.aliases:
-            raise LoweringError(f"unknown namespace alias {alias!r} in ref {ref!r}")
-        return self.aliases[alias], key
+        if alias in self.aliases:
+            return self.aliases[alias], key
+
+        if alias in self.imports:
+            uri = self.imports[alias]
+            module = self.catalog.modules.get(uri)
+            if module is None:
+                raise LoweringError(
+                    f"alias {alias!r} imports {uri!r}, which is not loaded "
+                    f"(pass its file too, e.g. {_file_stem(uri)}.xml)"
+                )
+            return module, key
+
+        # No import line: a loaded ICD that calls itself by this alias.
+        for module in self.catalog.modules.values():
+            if module.alias and module.alias == alias:
+                return module, key
+        raise LoweringError(f"unknown namespace alias {alias!r} in ref {ref!r}")
 
     def field_def(
         self, key: str, overrides: tuple[tuple[str, str], ...] = (), tag: str | None = None
@@ -447,6 +622,15 @@ class Lowering:
         return node
 
     # --- attribute helpers --------------------------------------------------
+
+    def warn(self, code: str, elem: ET.Element, message: str) -> None:
+        """Note a problem and carry on; validation reports it with the others."""
+        line = getattr(elem, "line", None)
+        if self.source and line:
+            where = f"{self.source}:{line}"
+        else:
+            where = self.source or (f"line {line}" if line else "(lowering)")
+        self.issues.append(Issue("warning", code, where, message))
 
     def field_name(self, elem: ET.Element) -> str:
         """`name`, or for a fieldDef its `id` (the use site renames it)."""
@@ -491,12 +675,34 @@ class Lowering:
         nv = elem.find("namedValues")
         if nv is None:
             return None
+        from_union = nv.get("fromUnion", "")
+        if from_union:
+            self.catalog.from_union = True
         return Enum(
             tuple(
                 NamedValue(self.required(v, "name"), _int(self.required(v, "value")))
                 for v in nv
             ),
             restrict=self.flag(nv, "restrict"),
+            from_union=from_union,
+        )
+
+    def default(self, elem: ET.Element, enum: Enum | None, scaled: bool = False):
+        """<default>: a number, or for an integer a name from its named values."""
+        text = elem.findtext("default")
+        if text is None:
+            return None
+        text = text.strip()
+        try:
+            return float(text) if scaled else _int(text)
+        except ValueError:
+            pass
+        for nv in enum.values if enum else ():
+            if nv.name == text:
+                return nv.value
+        raise LoweringError(
+            f"default {text!r} of {_describe(elem)} is not a number"
+            + ("" if scaled else " or one of its named values")
         )
 
     def flag(self, elem: ET.Element, attr: str) -> bool:

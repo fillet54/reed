@@ -19,13 +19,13 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
 
     check = commands.add_parser("check", help="lower and validate ICD files")
-    check.add_argument("files", nargs="+", help="ICD XML files (all imports together)")
+    check.add_argument("files", nargs="+", help="ICD XML files (imports are found next to them)")
     check.add_argument("--dialect", choices=dialects.NAMES, default="base")
     check.add_argument("--sizes", action="store_true", help="print message and case sizes")
     check.add_argument("--stats", action="store_true", help="print time and peak memory")
 
     tree = commands.add_parser("expand", help="print the variant tree of each message")
-    tree.add_argument("files", nargs="+", help="ICD XML files (all imports together)")
+    tree.add_argument("files", nargs="+", help="ICD XML files (imports are found next to them)")
     tree.add_argument("--dialect", choices=dialects.NAMES, default="base")
 
     args = parser.parse_args(argv)
@@ -37,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
 def run_expand(args) -> int:
     dialect = dialects.get(args.dialect)
     try:
-        icds = dialect.lower([read(path) for path in args.files], names=args.files)
+        icds = dialect.load(args.files)
         trees = expand(icds, dialect)
     except (OSError, LoweringError, ExpandError) as e:
         print(f"error: {e}", file=sys.stderr)
@@ -64,8 +64,7 @@ def run_check(args) -> int:
     started = time.perf_counter()
 
     try:
-        sources = [read(path) for path in args.files]
-        icds = dialect.lower(sources, names=args.files)
+        icds = dialect.load(args.files)
     except (OSError, LoweringError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
@@ -96,11 +95,6 @@ def run_check(args) -> int:
         )
 
     return 1 if errors else 0
-
-
-def read(path: str) -> str:
-    with open(path, encoding="utf-8") as f:
-        return f.read()
 
 
 def print_sizes(icds) -> None:

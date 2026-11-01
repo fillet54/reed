@@ -10,7 +10,9 @@ Values mirror the message:
 - a carried message (MessageRef) is a dict of that message's fields.
 
 Encoding fills in discriminators from the chosen case and counts from list
-lengths; a value given for them must agree. Decoding returns them.
+lengths; a value given for them must agree. Decoding returns them. A field
+left out uses its <default>, if it has one (a default needn't be one of the
+restricted named values: it's often a "none" value like 0).
 
 Bits are packed MSB-first into words of `layout.word_bits`, each word stored in
 `layout.byteorder`. Fields may cross word boundaries. A message always fills
@@ -193,24 +195,27 @@ class _Encoder:
                     raise CodecError(f"{_path(frame)}: is {value!r} but {reason} needs {need!r}")
                 value = need
 
+            restrict = True
+            if value is MISSING and getattr(node, "default", None) is not None:
+                value, restrict = node.default, False
             if value is MISSING:
                 raise CodecError(f"{_path(frame)}: missing")
 
-            raw = 0 if isinstance(node, Spare) else _to_raw(node, value, frame)
+            raw = 0 if isinstance(node, Spare) else _to_raw(node, value, frame, restrict)
             bits = (bits << node.bits) | raw
             nbits += node.bits
 
         return bits, nbits
 
 
-def _to_raw(node, value, frame: Frame) -> int:
+def _to_raw(node, value, frame: Frame, restrict: bool = True) -> int:
     """The unsigned raw bits for a leaf value."""
     if isinstance(node, Scaled):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise CodecError(f"{_path(frame)}: expected a number, got {value!r}")
         number = round((value - node.offset) / node.scale)
     else:
-        number = _int_value(node, value, frame)
+        number = _int_value(node, value, frame, restrict)
 
     bits = node.bits
     if node.signed:
@@ -224,7 +229,7 @@ def _to_raw(node, value, frame: Frame) -> int:
     return number & ((1 << bits) - 1)
 
 
-def _int_value(node: Int, value, frame: Frame) -> int:
+def _int_value(node: Int, value, frame: Frame, restrict: bool = True) -> int:
     enum = node.enum
     if isinstance(value, str):
         if enum is not None:
@@ -236,7 +241,7 @@ def _int_value(node: Int, value, frame: Frame) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise CodecError(f"{_path(frame)}: expected an integer, got {value!r}")
 
-    if enum is not None and enum.restrict and value not in {nv.value for nv in enum.values}:
+    if restrict and enum is not None and enum.restrict and value not in {nv.value for nv in enum.values}:
         raise CodecError(f"{_path(frame)}: {value} is not one of the named values")
     return value
 

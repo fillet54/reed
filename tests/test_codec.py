@@ -147,6 +147,76 @@ def test_restricted_enum_rejects_other_numbers():
         decode(msg, bytes.fromhex("c000"), icds)
 
 
+# --- defaults ---------------------------------------------------------------
+
+
+def test_missing_field_uses_its_default():
+    msg, icds = message(
+        '<integer name="a" bitCount="8"><default>7</default></integer>'
+        '<integer name="b" bitCount="8"/>'
+    )
+
+    assert encode(msg, {"b": 1}, icds) == bytes.fromhex("0701")
+
+
+def test_given_value_beats_the_default():
+    msg, icds = message('<integer name="a" bitCount="16"><default>7</default></integer>')
+
+    assert encode(msg, {"a": 9}, icds) == bytes.fromhex("0009")
+
+
+def test_scalar_default_is_scaled():
+    msg, icds = message(
+        '<scalar name="v" bitCount="16" scale="0.5" offset="10"><default>12.5</default></scalar>'
+    )
+
+    assert encode(msg, {}, icds) == bytes.fromhex("0005")
+
+
+def test_default_need_not_be_a_restricted_value():
+    # e.g. command_id defaults to 0 while the cases start at 1
+    msg, icds = message(MODE.format(restrict=' restrict="true"').replace(
+        "</namedValues>", "</namedValues><default>3</default>"
+    ))
+
+    assert encode(msg, {}, icds) == bytes.fromhex("c000")
+
+
+def test_chosen_case_beats_the_discriminator_default():
+    msg, icds = message(UNION.replace(
+        '<integer name="id" bitCount="8"/>',
+        '<integer name="id" bitCount="8"><default>0</default></integer>',
+    ))
+
+    assert encode(msg, {"body": {"small": {"x": 5}}}, icds) == bytes.fromhex("0105")
+
+
+# --- namedValues fromUnion ---------------------------------------------------
+
+
+FROM_UNION = (
+    '<integer name="command_id" bitCount="8">'
+    '<namedValues fromUnion="Body" restrict="true"/></integer>'
+    '<union name="Body" discrimField="../command_id">'
+    '<command name="power" discrimValue="1"><integer name="x" bitCount="8"/></command>'
+    "</union>"
+)
+
+
+def test_from_union_discriminator_decodes_to_the_case_name():
+    msg, icds = message(FROM_UNION)
+
+    data = encode(msg, {"Body": {"power": {"x": 3}}}, icds)
+
+    assert decode(msg, data, icds) == {"command_id": "power", "Body": {"power": {"x": 3}}}
+
+
+def test_from_union_name_is_accepted_when_encoding():
+    msg, icds = message(FROM_UNION)
+
+    assert encode(msg, {"command_id": "power", "Body": {"power": {"x": 3}}}, icds) == bytes.fromhex("0103")
+
+
 # --- scalars and spares -----------------------------------------------------
 
 

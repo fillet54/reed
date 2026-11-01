@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from xml.etree import ElementTree as ET
 
 from .ir import Icd, LayoutPolicy
-from .lower import Lowering, lower_many
+from .lower import Lowering, load_files, lower_many
 from .validate import BASE_RULES, Issue, Rule, validate
 
 
@@ -32,6 +32,10 @@ class Dialect:
         self, sources: Iterable[str | ET.Element], names: Iterable[str] | None = None
     ) -> dict[str, Icd]:
         return lower_many(sources, self.lowering, names, self.layout)
+
+    def load(self, paths: Iterable[str]) -> dict[str, Icd]:
+        """Lower ICD files from disk, following their refSchemaLocation imports."""
+        return load_files(paths, self.lowering, self.layout)
 
     def validate(self, icds: Icd | Mapping[str, Icd]) -> list[Issue]:
         if not self.expand:
