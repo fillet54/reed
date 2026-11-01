@@ -228,6 +228,18 @@ def test_scalar_is_raw_times_scale_plus_offset():
     assert data == bytes.fromhex("0500")  # raw 5
 
 
+def test_spares_are_zero_even_when_named():
+    msg, icds = message('<spare name="pad" bitCount="8"/><integer name="a" bitCount="8"/>')
+
+    assert encode(msg, {"a": 0xFF}, icds) == bytes.fromhex("00ff")
+
+
+def test_spare_bits_are_ignored_when_decoding():
+    msg, icds = message('<spare bitCount="8"/><integer name="a" bitCount="8"/>')
+
+    assert decode(msg, bytes.fromhex("abff"), icds) == {"a": 0xFF}
+
+
 def test_spares_are_zero_and_not_in_the_value():
     data = roundtrip('<spare bitCount="4"/><integer name="a" bitCount="4"/>', {"a": 0xF})
 
@@ -302,6 +314,51 @@ def test_decoding_an_unknown_discriminator_is_an_error():
 
     with pytest.raises(CodecError, match="m/body: no case for discriminator value 9"):
         decode(msg, bytes.fromhex("0900"), icds)
+
+
+# --- default cases ----------------------------------------------------------
+
+
+DEFAULT_UNION = UNION.replace(
+    "</union>", '<spare discrimValue="default" bitCount="8"/></union>'
+)
+
+
+def test_unknown_discriminator_decodes_as_the_default_case():
+    msg, icds = message(DEFAULT_UNION)
+
+    assert decode(msg, bytes.fromhex("0900"), icds) == {"id": 9, "body": {"default": {}}}
+
+
+def test_default_case_encodes_with_a_given_discriminator():
+    msg, icds = message(DEFAULT_UNION)
+
+    assert encode(msg, {"id": 9, "body": {"default": {}}}, icds) == bytes.fromhex("0900")
+
+
+def test_default_case_needs_a_discriminator_value():
+    msg, icds = message(DEFAULT_UNION)
+
+    with pytest.raises(
+        CodecError, match="m/id: missing; case 'default' is the default case, so give a value"
+    ):
+        encode(msg, {"body": {"default": {}}}, icds)
+
+
+def test_default_case_uses_the_discriminator_field_default():
+    msg, icds = message(DEFAULT_UNION.replace(
+        '<integer name="id" bitCount="8"/>',
+        '<integer name="id" bitCount="8"><default>0</default></integer>',
+    ))
+
+    assert encode(msg, {"body": {"default": {}}}, icds) == bytes.fromhex("0000")
+
+
+def test_default_case_cannot_use_another_cases_value():
+    msg, icds = message(DEFAULT_UNION)
+
+    with pytest.raises(CodecError, match="m/id: 2 belongs to case 'big', not the default case"):
+        encode(msg, {"id": 2, "body": {"default": {}}}, icds)
 
 
 # --- arrays -----------------------------------------------------------------

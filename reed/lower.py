@@ -34,6 +34,7 @@ from xml.etree import ElementTree as ET
 from xml.parsers import expat
 
 from .ir import (
+    DEFAULT,
     VARIABLE,
     Array,
     Case,
@@ -173,6 +174,11 @@ class _FromUnion:
             )
         )
         return node
+
+
+def _renamed(node, name: str):
+    """`node` under its use-site name. Spares have no name and stay as they are."""
+    return node if isinstance(node, Spare) else replace(node, name=name)
 
 
 def _same(a: tuple, b: tuple) -> bool:
@@ -471,9 +477,17 @@ class Lowering:
 
     def case(self, elem: ET.Element) -> Case:
         with _at(elem):
-            name = self.required(elem, "name")
-            value = _int(self.required(elem, "discrimValue"))
+            raw = self.required(elem, "discrimValue")
+            value = DEFAULT if raw == "default" else _int(raw)
 
+            if _tag(elem) == "spare":
+                # A case with no fields, just spare bits: often the default
+                # case, for commands without a body.
+                name = elem.get("name") or ("default" if value is DEFAULT else f"spare{value}")
+                body = Struct(name, (Spare(self.fixed_bits(elem)),))
+                return Case(name, "spare", value, body)
+
+            name = self.required(elem, "name")
             if elem.get("ref"):
                 body = self.ref(elem, merge=False)  # its attributes are the case's
             else:
@@ -506,12 +520,12 @@ class Lowering:
             raise LoweringError(f"unresolved ref {ref!r} on <{_tag(elem)} name={name!r}>")
 
         if not merge:
-            return replace(module.field_def(key), name=name)
+            return _renamed(module.field_def(key), name)
 
         overrides = tuple(sorted((k, v) for k, v in elem.attrib.items() if k not in USE_ATTRS))
         def_elem = module.def_elems[key]
         tag = None if self.same_kind(elem, def_elem) else elem.tag
-        node = replace(module.field_def(key, overrides, tag), name=name)
+        node = _renamed(module.field_def(key, overrides, tag), name)
 
         if tag and hasattr(node, "meta"):
             # Reported by validation (ref-tag-mismatch), per use.
@@ -541,7 +555,7 @@ class Lowering:
             node = replace(node, default=self.default(elem, enum, scaled=isinstance(node, Scaled)))
 
         label, description = (elem.findtext(tag) for tag in ("label", "description"))
-        if label is not None or description is not None:
+        if (label is not None or description is not None) and hasattr(node, "meta"):
             meta = node.meta
             node = replace(
                 node,
@@ -554,6 +568,8 @@ class Lowering:
 
         count = elem.get("countValue")
         if count:
+            if not hasattr(node, "meta"):  # a spare
+                return Array(name, count, node)
             return Array(name, count, replace(node, meta=Meta()), meta=node.meta)
         return node
 

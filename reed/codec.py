@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from .ir import Array, Icd, Int, LayoutPolicy, Message, MessageRef, Scaled, Spare, Struct, Union
+from .ir import DEFAULT, Array, Icd, Int, LayoutPolicy, Message, MessageRef, Scaled, Spare, Struct, Union
 from .paths import Frame, Stack, children, field_path, push, resolve
 from .size import find_message, layout_of
 
@@ -81,6 +81,8 @@ class _Encoder:
         self.icds = icds
         self.leaves: list[tuple[Frame, object]] = []  # stream order
         self.derived: dict[tuple, tuple[int, str]] = {}  # index -> (raw, reason)
+        # A default case's discriminator: index -> (case, other cases' values)
+        self.open: dict[tuple, tuple[str, dict]] = {}
 
     def collect(self, stack: Stack, value) -> None:
         frame = stack[-1]
@@ -139,7 +141,13 @@ class _Encoder:
         target = resolve(node.discrim, stack)
         if target is None:
             raise CodecError(f"{_path(frame)}: discrimField {node.discrim!r} does not resolve")
-        self.derive(target, case.value, f"case {case.name!r}")
+        if case.value is DEFAULT:
+            # The value is the caller's (or the field's default); it just
+            # mustn't select another case.
+            others = {c.value: c.name for c in node.cases if isinstance(c.value, int)}
+            self.open[target.index] = (case.name, others)
+        else:
+            self.derive(target, case.value, f"case {case.name!r}")
 
         self.collect(push(stack, children(frame)[index]), case_value)
 
@@ -198,10 +206,23 @@ class _Encoder:
             restrict = True
             if value is MISSING and getattr(node, "default", None) is not None:
                 value, restrict = node.default, False
+            opened = self.open.get(frame.index)
             if value is MISSING:
+                if opened:
+                    raise CodecError(
+                        f"{_path(frame)}: missing; case {opened[0]!r} is the default case, "
+                        "so give a value"
+                    )
                 raise CodecError(f"{_path(frame)}: missing")
 
             raw = 0 if isinstance(node, Spare) else _to_raw(node, value, frame, restrict)
+            if opened:
+                number = _signed(raw, node)
+                if number in opened[1]:
+                    raise CodecError(
+                        f"{_path(frame)}: {number} belongs to case {opened[1][number]!r}, "
+                        "not the default case"
+                    )
             bits = (bits << node.bits) | raw
             nbits += node.bits
 
@@ -334,9 +355,15 @@ class _Decoder:
         node: Union = frame.node
         discrim = self.number_at(resolve(node.discrim, stack), frame, "discrimField")
 
+        fallback = None
         for i, case in enumerate(node.cases):
             if case.value == discrim:
                 return {case.name: self.read(push(stack, children(frame)[i]))}
+            if case.value is DEFAULT:
+                fallback = i
+        if fallback is not None:
+            case = node.cases[fallback]
+            return {case.name: self.read(push(stack, children(frame)[fallback]))}
         raise CodecError(f"{_path(frame)}: no case for discriminator value {discrim}")
 
     def array(self, stack: Stack) -> list:
@@ -356,6 +383,13 @@ class _Decoder:
 
 
 # --- helpers ------------------------------------------------------------------
+
+
+def _signed(raw: int, node) -> int:
+    """The number that raw bits stand for."""
+    if node.signed and raw >> (node.bits - 1):
+        return raw - (1 << node.bits)
+    return raw
 
 
 def _item(frame: Frame, i: int) -> Frame:

@@ -5,7 +5,7 @@ import pytest
 from reed.dialect import Dialect
 from reed.dialects.example import EXAMPLE
 from reed.expand import ExpandError, Variant, expand
-from reed.ir import Int, MessageRef, Struct, Union
+from reed.ir import DEFAULT, Int, MessageRef, Struct, Union
 
 
 def tree(body: str, *patterns: str, extra: str = "", dialect: Dialect | None = None):
@@ -171,6 +171,17 @@ def test_sibling_unions_nest_in_field_order():
         "m/off", "m/off/hot", "m/off/cold",
     ]  # fmt: skip
     assert find(root, "m/off/cold").id == ("m", 0, 2)
+
+
+def test_default_case_is_a_variant_with_an_open_discriminator():
+    root = tree(
+        COMMANDS.replace("</union>", '<spare discrimValue="default" bitCount="8"/></union>'),
+        "m/id",
+    )
+
+    default = find(root, "m/default")
+    assert default.id == ("m", DEFAULT)
+    assert default.message.consts == ()
 
 
 # --- what is not expanded ---------------------------------------------------

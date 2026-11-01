@@ -165,6 +165,16 @@ def test_message_ref_into_another_icd_uses_icds():
     assert size_of(icds["urn:a"].messages[0], icds=icds) == Size.fixed(16)
 
 
+def test_default_case_counts_in_the_union_size():
+    size = message_size(
+        '<integer name="id" bitCount="8"/><union name="body" discrimField="../id">'
+        '<command name="a" discrimValue="1"><spare bitCount="8"/></command>'
+        '<spare discrimValue="default" bitCount="30"/></union>'
+    )
+
+    assert (size.lo, size.hi) == (16, 38)
+
+
 # --- word padding -----------------------------------------------------------
 
 

@@ -24,7 +24,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .ir import Array, Icd, Message, MessageRef, Struct, Union
+from .ir import DEFAULT, Array, Icd, Message, MessageRef, Struct, Union
 from .paths import Frame, Stack, children, push, resolve, root_stack
 from .validate import Issue, rule
 
@@ -167,7 +167,8 @@ class _Build:
 
         case = union.cases[chosen]
         target = resolve(union.discrim, stack)
-        self.consts.append(("/".join(self.paths[target.index]), case.value))
+        if case.value is not DEFAULT:  # a default case leaves the discriminator open
+            self.consts.append(("/".join(self.paths[target.index]), case.value))
 
         inner = path + (union.name,) if union.name else path
         case_frame = children(frame)[chosen]

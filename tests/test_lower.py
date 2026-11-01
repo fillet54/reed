@@ -5,6 +5,7 @@ from dataclasses import replace
 import pytest
 
 from reed.ir import (
+    DEFAULT,
     VARIABLE,
     Array,
     Case,
@@ -149,6 +150,31 @@ def test_spare():
     assert lower_field('<spare bitCount="10"/>') == Spare(10)
 
 
+def test_spare_name_is_optional_and_ignored():
+    assert lower_field('<spare name="pad" bitCount="10"/>') == Spare(10)
+
+
+def test_spare_can_be_a_field_def():
+    field = lower_field('<spare ref="pad16"/>', defs='<spare id="pad16" bitCount="16"/>')
+
+    assert field == Spare(16)
+
+
+def test_ref_to_a_spare_def_can_give_it_a_name_and_label():
+    field = lower_field(
+        '<spare name="gap" ref="pad16"><label>Gap</label></spare>',
+        defs='<spare id="pad16" bitCount="16"/>',
+    )
+
+    assert field == Spare(16)
+
+
+def test_ref_can_override_a_spares_bit_count():
+    field = lower_field('<spare ref="pad16" bitCount="4"/>', defs='<spare id="pad16" bitCount="16"/>')
+
+    assert field == Spare(4)
+
+
 # --- group ------------------------------------------------------------------
 
 
@@ -210,6 +236,36 @@ def test_union_requires_discriminator():
 def test_union_case_requires_discriminator_value():
     with pytest.raises(LoweringError, match="discrimValue"):
         lower_field('<union name="body" discrimField="x"><command name="c"/></union>')
+
+
+# --- default cases ----------------------------------------------------------
+
+
+def test_spare_default_case():
+    union = lower_field(
+        '<union name="body" discrimField="../id">'
+        '<command name="a" discrimValue="1"/><spare discrimValue="default" bitCount="30"/>'
+        "</union>"
+    )
+
+    assert union.cases[1] == Case("default", "spare", DEFAULT, Struct("default", (Spare(30),)))
+
+
+def test_any_case_can_be_the_default():
+    union = lower_field(
+        '<union name="body" discrimField="../id">'
+        '<command name="other" discrimValue="default"><spare bitCount="4"/></command></union>'
+    )
+
+    assert (union.cases[0].name, union.cases[0].value) == ("other", DEFAULT)
+
+
+def test_spare_case_with_a_value():
+    union = lower_field(
+        '<union name="body" discrimField="../id"><spare discrimValue="3" bitCount="8"/></union>'
+    )
+
+    assert union.cases[0] == Case("spare3", "spare", 3, Struct("spare3", (Spare(8),)))
 
 
 # --- fieldDef refs (inlined, shared) ----------------------------------------

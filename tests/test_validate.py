@@ -151,6 +151,17 @@ def test_extra_rules_run_alongside_base_rules():
     ]
 
 
+# --- default cases ----------------------------------------------------------
+
+
+def test_two_default_cases_is_an_error():
+    assert issues(
+        '<integer name="id" bitCount="8"/><union name="body" discrimField="../id">'
+        '<spare discrimValue="default" bitCount="8"/>'
+        '<command name="b" discrimValue="default"/></union>'
+    ) == [("error", "duplicate-case-value", "m/body")]
+
+
 # --- whole words ------------------------------------------------------------
 
 

@@ -32,6 +32,16 @@ class _Variable:
 VARIABLE = _Variable()
 
 
+class _Default:
+    """Marker for discrimValue="default": the case used when no other matches."""
+
+    def __repr__(self):
+        return "default"
+
+
+DEFAULT = _Default()
+
+
 @dataclass(frozen=True, slots=True)
 class LayoutPolicy:
     """How messages sit in words. Set per dialect; the XML has no syntax for it.
@@ -123,7 +133,7 @@ class Struct:
 class Case:
     name: str
     kind: str  # "command", "return", "system", ...
-    value: int | tuple[int, ...]
+    value: int | tuple[int, ...] | _Default  # DEFAULT: when no other case matches
     body: Struct | MessageRef
     meta: Meta = field(default_factory=Meta)
 
