@@ -1,5 +1,7 @@
 """Lowering one element at a time: XML snippet in, IR node out."""
 
+from dataclasses import replace
+
 import pytest
 
 from reed.ir import (
@@ -258,6 +260,131 @@ def test_field_def_ref_cycle_is_an_error():
 def test_unresolved_ref_is_an_error():
     with pytest.raises(LoweringError, match="unresolved ref 'nope'"):
         lower_field('<group name="x" ref="nope"/>')
+
+
+# --- use-site attributes and children merge into the fieldDef ---------------
+
+
+SPEED_DEF = (
+    '<scalar id="speed" bitCount="12" scale="0.5" offset="0">'
+    "<label>Speed</label><description>Ground speed</description></scalar>"
+)
+
+
+def test_use_site_attribute_overrides_the_def():
+    field = lower_field('<scalar name="v" ref="speed" scale="2"/>', defs=SPEED_DEF)
+
+    assert (field.name, field.bits, field.scale) == ("v", 12, 2.0)
+
+
+def test_def_attributes_are_kept_when_not_overridden():
+    field = lower_field('<scalar name="v" ref="speed" offset="5"/>', defs=SPEED_DEF)
+
+    assert (field.bits, field.scale, field.offset) == (12, 0.5, 5.0)
+
+
+def test_use_site_label_and_description_override_the_def():
+    field = lower_field(
+        '<scalar name="v" ref="speed"><label>Air speed</label></scalar>', defs=SPEED_DEF
+    )
+
+    assert field.meta.label == "Air speed"
+    assert field.meta.description == "Ground speed"
+
+
+def test_merged_field_still_records_its_origin():
+    field = lower_field(
+        '<scalar name="v" ref="speed" scale="2"><label>Air speed</label></scalar>',
+        defs=SPEED_DEF,
+    )
+
+    assert field.meta.origin == ("", "speed")
+
+
+def test_def_named_values_are_kept_through_a_merge():
+    field = lower_field(
+        '<integer name="m" ref="mode" signed="false"/>',
+        defs='<integer id="mode" bitCount="2"><namedValues>'
+        '<namedValue name="ON" value="1"/></namedValues></integer>',
+    )
+
+    assert [v.name for v in field.enum.values] == ["ON"]
+
+
+def test_uses_with_the_same_overrides_share_one_node():
+    a, b = lower_fields(
+        '<scalar name="a" ref="speed" scale="2"/><scalar name="b" ref="speed" scale="2"/>',
+        defs=SPEED_DEF,
+    )
+
+    assert replace(a, name="b") == b
+    assert a.meta is b.meta
+
+
+def test_count_value_on_a_ref_makes_an_array_of_the_def():
+    _, field = lower_fields(
+        '<integer name="n" bitCount="4"/><group name="items" ref="header" countValue="../n"/>',
+        defs=HEADER_DEF,
+    )
+
+    assert isinstance(field, Array)
+    assert (field.name, field.count) == ("items", "../n")
+    assert field.element.fields == (Int("id", 16), Int("key", 16))
+
+
+def test_use_site_tag_wins_over_the_def_tag():
+    # Like the attributes: the ref'ing element decides, the def fills in.
+    field = lower_field('<integer name="x" ref="speed"/>', defs=SPEED_DEF)
+
+    assert isinstance(field, Int)
+    assert (field.name, field.bits) == ("x", 12)
+    assert field.meta.origin == ("", "speed")
+    assert field.meta.label == "Speed"
+
+
+def test_same_tag_without_overrides_shares_the_def():
+    a, b = lower_fields(
+        '<scalar name="a" ref="speed"/><scalar name="b" ref="speed"/>', defs=SPEED_DEF
+    )
+
+    assert a.meta is b.meta
+
+
+def test_ref_with_other_children_is_an_error():
+    with pytest.raises(
+        LoweringError,
+        match=r"<group name='hdr'> refs 'header', so it can only have <label> and "
+        r"<description> children, not <integer>",
+    ):
+        lower_field(
+            '<group name="hdr" ref="header"><integer name="extra" bitCount="8"/></group>',
+            defs=HEADER_DEF,
+        )
+
+
+def test_ref_cannot_add_named_values():
+    with pytest.raises(LoweringError, match="not <namedValues>"):
+        lower_field(
+            '<scalar name="v" ref="speed"><namedValues/></scalar>', defs=SPEED_DEF
+        )
+
+
+def test_message_ref_cannot_have_children_either():
+    with pytest.raises(LoweringError, match="not <spare>"):
+        lower_field(
+            '<group name="inner" ref="other"><spare bitCount="2"/></group>',
+            extra='<message name="other"/>',
+        )
+
+
+def test_case_ref_cannot_have_children():
+    with pytest.raises(LoweringError, match="not <integer>"):
+        lower_field(
+            '<union name="body" discrimField="id">'
+            '<command name="truck" discrimValue="7" ref="other">'
+            '<integer name="x" bitCount="8"/></command></union>',
+            extra='<message name="other"/>',
+        )
 
 
 # --- message refs (kept as references) --------------------------------------

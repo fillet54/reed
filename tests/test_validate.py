@@ -182,3 +182,70 @@ def test_without_padding_a_variable_message_must_always_be_whole_words(n, e, ok)
 
 def test_padding_fills_any_size():
     assert layout_issues('<spare bitCount="8"/>') == []
+
+
+# --- ref tag mismatch -------------------------------------------------------
+
+
+SPEED = '<scalar id="speed" bitCount="12" scale="0.5"/>'
+
+
+def test_ref_with_a_different_tag_warns():
+    assert issues('<integer name="x" ref="speed"/>', defs=SPEED) == [
+        ("warning", "ref-tag-mismatch", "m/x")
+    ]
+
+
+def test_ref_tag_mismatch_says_which_tag_wins_and_where():
+    text = (
+        "<icd>\n"
+        "  <fieldDefs>\n"
+        f"    {SPEED}\n"
+        "  </fieldDefs>\n"
+        '  <message name="m">\n'
+        '    <integer name="x" ref="speed"/>\n'
+        "  </message>\n"
+        "</icd>"
+    )
+
+    (issue,) = validate(lower_string(text))
+
+    assert issue.message == (
+        "line 6: <integer name='x'> refs 'speed', which is a <scalar> (line 3); "
+        "the <integer> wins"
+    )
+
+
+def test_ref_with_the_same_tag_does_not_warn():
+    assert issues('<scalar name="x" ref="speed"/>', defs=SPEED) == []
+
+
+def test_every_mismatched_use_is_reported():
+    assert issues(
+        '<integer name="a" ref="speed"/><integer name="b" ref="speed"/>', defs=SPEED
+    ) == [
+        ("warning", "ref-tag-mismatch", "m/a"),
+        ("warning", "ref-tag-mismatch", "m/b"),
+    ]
+
+
+def test_mismatched_ref_used_as_an_array_warns():
+    found = issues(
+        '<integer name="n" bitCount="4"/><integer name="xs" ref="speed" countValue="../n"/>',
+        defs=SPEED,
+    )
+
+    assert ("warning", "ref-tag-mismatch", "m/xs") in found
+
+
+def test_dialect_alias_tags_do_not_warn():
+    from reed.dialects.example import EXAMPLE
+
+    icds = EXAMPLE.lower(
+        [
+            '<icd><fieldDefs><group id="pair"><spare bitCount="16"/></group></fieldDefs>'
+            '<message name="m"><group2 name="p" ref="pair"/></message></icd>'
+        ]
+    )
+
+    assert EXAMPLE.validate(icds) == []

@@ -19,7 +19,7 @@ import math
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
-from .ir import VARIABLE, Array, Case, Domain, Icd, Int, Message, Struct, Union
+from .ir import VARIABLE, Array, Case, Domain, Icd, Int, Message, Scaled, Struct, Union
 from .paths import Frame, Stack, children, is_before, push, resolve, root_stack
 from .size import Size, Sizer
 
@@ -247,6 +247,18 @@ def _check_path(ctx: Context, path: str, attr: str):
     return target
 
 
+def _ref_tag_mismatch(node, ctx):
+    """A ref whose tag differs from its fieldDef's: the use's tag wins; check it should."""
+    note = node.meta.prop("ref-tag-mismatch")
+    if note:
+        yield ctx.warning("ref-tag-mismatch", note)
+
+
+ref_tag_mismatch = tuple(
+    Rule(t, _ref_tag_mismatch, "ref_tag_mismatch") for t in (Int, Scaled, Struct, Array)
+)
+
+
 BASE_RULES: tuple[Rule, ...] = (
     message_size,
     whole_words,
@@ -255,4 +267,5 @@ BASE_RULES: tuple[Rule, ...] = (
     duplicate_case_values,
     count_field,
     duplicate_domain_values,
+    *ref_tag_mismatch,
 )

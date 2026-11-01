@@ -4,6 +4,13 @@ FieldDef refs are inlined: each fieldDef is lowered once, the first time it is
 used, and the same object is placed at every use site. Refs to a message name
 stay as MessageRef.
 
+A use site can override the fieldDef: its tag and attributes win and the
+def's attributes fill in the rest (name, ref, xsi:type and countValue describe
+the use and aren't merged); its <label>/<description> replace the def's. No
+other children are allowed. A use with overrides gets its own node, shared by
+uses with the same overrides.
+`countValue` on a ref makes an array of the def.
+
 An ICD names itself with `<namespace alias="x">uri</namespace>`; `ref="x:name"`
 with its own alias resolves locally. Imports of other files (schemaLocation)
 will add more aliases.
@@ -44,6 +51,11 @@ XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
 XSI_TYPE = f"{{{XSI_NS}}}type"
 
 # Children that describe their parent rather than being fields of it.
+# Attributes that describe the use of a fieldDef rather than override it.
+USE_ATTRS = {"name", "ref", XSI_TYPE, "countValue"}
+# The only children a ref may have.
+REF_CHILDREN = ("label", "description")
+
 META_TAGS = {"label", "description", "namedValues"}
 
 
@@ -99,6 +111,14 @@ def _at(elem: ET.Element):
         if e.line is None:
             e.line = getattr(elem, "line", None)
         raise
+
+
+def _merged(elem: ET.Element, overrides, tag: str | None = None) -> ET.Element:
+    """A copy of fieldDef `elem` with the use site's attributes (and tag) applied."""
+    merged = _Element(tag or elem.tag, {**elem.attrib, **dict(overrides)})
+    merged.extend(list(elem))
+    merged.line = getattr(elem, "line", None)
+    return merged
 
 
 def _describe(elem: ET.Element) -> str:
@@ -220,7 +240,7 @@ class Lowering:
             elif _tag(child) == "message":
                 self.message_names.add(self.required(child, "name"))
 
-        self.defs: dict[str, Node] = {}
+        self.defs: dict[tuple, Node] = {}  # (key, overrides) -> lowered fieldDef
 
     # --- entry points -------------------------------------------------------
 
@@ -247,6 +267,9 @@ class Lowering:
                     raise LoweringError(f"unknown xsi:type {xsi_type!r} on {_describe(elem)}")
                 return method(elem)
 
+            if elem.get("ref"):
+                return self.ref(elem)
+
             method = getattr(self, f"lower_{_tag(elem)}", None)
             if method is None:
                 raise LoweringError(f"unknown element <{_tag(elem)}>")
@@ -259,7 +282,7 @@ class Lowering:
 
     def lower_integer(self, elem):
         return Int(
-            self.required(elem, "name"),
+            self.field_name(elem),
             self.fixed_bits(elem),
             signed=self.flag(elem, "signed"),
             enum=self.enum(elem),
@@ -268,7 +291,7 @@ class Lowering:
 
     def lower_scalar(self, elem):
         return Scaled(
-            self.required(elem, "name"),
+            self.field_name(elem),
             self.fixed_bits(elem),
             scale=float(elem.get("scale", 1)),
             offset=float(elem.get("offset", 0)),
@@ -280,9 +303,6 @@ class Lowering:
         return Spare(self.fixed_bits(elem))
 
     def lower_group(self, elem):
-        if elem.get("ref"):
-            return self.ref(elem)
-
         name = elem.get("name") or elem.get("id") or ""
         meta = self.meta(elem)
         struct = Struct(name, self.fields(elem), declared_bits=self.bits(elem), meta=meta)
@@ -310,7 +330,7 @@ class Lowering:
             value = _int(self.required(elem, "discrimValue"))
 
             if elem.get("ref"):
-                body = self.ref(elem)
+                body = self.ref(elem, merge=False)  # its attributes are the case's
             else:
                 body = Struct(name, self.fields(elem), meta=self.meta(elem))
 
@@ -318,12 +338,20 @@ class Lowering:
 
     # --- refs ---------------------------------------------------------------
 
-    def ref(self, elem: ET.Element) -> Node:
+    def ref(self, elem: ET.Element, merge: bool = True) -> Node:
+        """A use of a fieldDef or message. With `merge`, the use overrides the def."""
         ref = elem.get("ref")
         module, key = self.module_for(ref)
         name = elem.get("name") or key
         is_def = key in module.def_elems
         is_message = key in module.message_names
+
+        for child in elem:
+            if _tag(child) not in REF_CHILDREN:
+                raise LoweringError(
+                    f"{_describe(elem)} refs {ref!r}, so it can only have <label> and "
+                    f"<description> children, not <{_tag(child)}>"
+                )
 
         if is_def and is_message:
             raise LoweringError(f"ambiguous ref {ref!r}: both a fieldDef and a message")
@@ -332,7 +360,49 @@ class Lowering:
         if not is_def:
             raise LoweringError(f"unresolved ref {ref!r} on <{_tag(elem)} name={name!r}>")
 
-        return replace(module.field_def(key), name=name)
+        if not merge:
+            return replace(module.field_def(key), name=name)
+
+        overrides = tuple(sorted((k, v) for k, v in elem.attrib.items() if k not in USE_ATTRS))
+        def_elem = module.def_elems[key]
+        tag = None if self.same_kind(elem, def_elem) else elem.tag
+        node = replace(module.field_def(key, overrides, tag), name=name)
+
+        if tag and hasattr(node, "meta"):
+            # Reported by validation (ref-tag-mismatch), per use.
+            note = (
+                f"{_describe(elem)} refs {ref!r}, which is a <{_tag(def_elem)}>"
+                + (f" (line {def_elem.line})" if getattr(def_elem, "line", None) else "")
+                + f"; the <{_tag(elem)}> wins"
+            )
+            if getattr(elem, "line", None):
+                note = f"line {elem.line}: {note}"
+            props = node.meta.props + (("ref-tag-mismatch", note),)
+            node = replace(node, meta=replace(node.meta, props=props))
+
+        label, description = (elem.findtext(tag) for tag in REF_CHILDREN)
+        if label is not None or description is not None:
+            meta = node.meta
+            node = replace(
+                node,
+                meta=replace(
+                    meta,
+                    label=label.strip() if label is not None else meta.label,
+                    description=description.strip() if description is not None else meta.description,
+                ),
+            )
+
+        count = elem.get("countValue")
+        if count:
+            return Array(name, count, replace(node, meta=Meta()), meta=node.meta)
+        return node
+
+    def same_kind(self, a: ET.Element, b: ET.Element) -> bool:
+        """Same tag, or tags this dialect lowers the same way (e.g. group2/group)."""
+        if a.tag == b.tag:
+            return True
+        lower_a = getattr(type(self), f"lower_{_tag(a)}", None)
+        return lower_a is not None and lower_a is getattr(type(self), f"lower_{_tag(b)}", None)
 
     def module_for(self, ref: str) -> tuple[Lowering, str]:
         """Split `alias:key` and find the ICD it names."""
@@ -344,9 +414,14 @@ class Lowering:
             raise LoweringError(f"unknown namespace alias {alias!r} in ref {ref!r}")
         return self.aliases[alias], key
 
-    def field_def(self, key: str) -> Node:
-        if key in self.defs:
-            return self.defs[key]
+    def field_def(
+        self, key: str, overrides: tuple[tuple[str, str], ...] = (), tag: str | None = None
+    ) -> Node:
+        """The lowered fieldDef `key`, with the use site's attribute `overrides`
+        applied and, if given, its `tag` instead of the def's."""
+        memo = (key, overrides, tag)
+        if memo in self.defs:
+            return self.defs[memo]
 
         stack = self.catalog.in_progress
         here = (self.namespace, key)
@@ -356,18 +431,28 @@ class Lowering:
             )
             raise LoweringError(f"fieldDef ref cycle: {chain}")
 
+        elem = self.def_elems[key]
+        if overrides or tag:
+            elem = _merged(elem, overrides, tag)
+
         stack.append(here)
         try:
-            node = self.field(self.def_elems[key])
+            node = self.field(elem)
         finally:
             stack.pop()
 
         if hasattr(node, "meta"):
             node = replace(node, meta=replace(node.meta, origin=here))
-        self.defs[key] = node
+        self.defs[memo] = node
         return node
 
     # --- attribute helpers --------------------------------------------------
+
+    def field_name(self, elem: ET.Element) -> str:
+        """`name`, or for a fieldDef its `id` (the use site renames it)."""
+        if elem.get("name") is None and elem.get("id") is not None:
+            return elem.get("id")
+        return self.required(elem, "name")
 
     def required(self, elem: ET.Element, attr: str) -> str:
         value = elem.get(attr)
