@@ -1,4 +1,4 @@
-"""The example dialect: systemIdRef and unions keyed by system ID."""
+"""The example dialect: subsystemDef/subsystemIDRef and unions keyed by system ID."""
 
 import pytest
 
@@ -8,7 +8,7 @@ from reed.ir import Array, Case, Domain, Int, Meta, Spare, Struct, Union
 from reed.lower import LoweringError, lower_string
 
 SYSTEM_ID_DEF = """
-<group id="systemIdRef" xsi:type="systemIdRef" bitCount="21">
+<group id="SubsystemType" xsi:type="subsystemDef" bitCount="21">
   <system name="vehicle" value="1">
     <subsystem name="computer" value="1">
       <unit name="left" value="1"/>
@@ -29,17 +29,17 @@ def lower_fields(body: str):
     return icd.messages[0].body.fields
 
 
-def test_system_id_ref_is_three_seven_bit_fields():
-    (field,) = lower_fields('<group name="systemId" ref="systemIdRef"/>')
+def test_subsystem_id_ref_is_three_seven_bit_fields():
+    (field,) = lower_fields('<group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"/>')
 
     assert field.name == "systemId"
     assert field.fields == (Int("system", 7), Int("subsystem", 7), Int("unit", 7))
     assert field.declared_bits == 21
-    assert field.meta == Meta(origin=("", "systemIdRef"))
+    assert field.meta == Meta(origin=("", "SubsystemType"))
 
 
-def test_system_id_ref_keeps_hierarchy_as_domain():
-    (field,) = lower_fields('<group name="systemId" ref="systemIdRef"/>')
+def test_subsystem_id_ref_keeps_hierarchy_as_domain():
+    (field,) = lower_fields('<group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"/>')
 
     assert field.domain == (
         Domain(
@@ -51,9 +51,40 @@ def test_system_id_ref_keeps_hierarchy_as_domain():
     )
 
 
+def test_plain_ref_to_a_subsystem_def_works_too():
+    (field,) = lower_fields('<group name="systemId" ref="SubsystemType"/>')
+
+    assert field.fields == (Int("system", 7), Int("subsystem", 7), Int("unit", 7))
+
+
+def test_subsystem_id_ref_must_point_at_a_subsystem_def():
+    icd = (
+        '<icd><fieldDefs><group id="header"><spare bitCount="8"/></group></fieldDefs>'
+        '<message name="m"><group name="id" ref="header" xsi:type="subsystemIDRef"/>'
+        "</message></icd>"
+    )
+
+    with pytest.raises(LoweringError, match="subsystemIDRef 'header' is not a subsystemDef"):
+        lower_string(icd, lowering=ExampleLowering)
+
+
+def test_subsystem_id_ref_needs_a_ref():
+    with pytest.raises(LoweringError, match="xsi:type subsystemIDRef needs a ref"):
+        lower_fields('<group name="systemId" xsi:type="subsystemIDRef"/>')
+
+
+def test_old_system_id_ref_type_is_gone():
+    with pytest.raises(LoweringError, match="unknown xsi:type 'systemIdRef'"):
+        lower_string(
+            '<icd><fieldDefs><group id="s" xsi:type="systemIdRef" bitCount="21"/></fieldDefs>'
+            '<message name="m"><group name="x" ref="s"/></message></icd>',
+            lowering=ExampleLowering,
+        )
+
+
 def test_union_keyed_by_system_id_flattens_to_cases_per_level():
     _, union = lower_fields(
-        '<group name="systemId" ref="systemIdRef"/>'
+        '<group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"/>'
         '<union discrimField="../systemId">'
         '  <system name="vehicle" value="1">'
         '    <integer name="aliveCount" bitCount="16"/>'
@@ -96,9 +127,9 @@ def test_group2_lowers_like_group():
 
 
 def test_group2_can_ref_a_field_def():
-    (field,) = lower_fields('<group2 name="systemId" ref="systemIdRef"/>')
+    (field,) = lower_fields('<group2 name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"/>')
 
-    assert field.meta.origin == ("", "systemIdRef")
+    assert field.meta.origin == ("", "SubsystemType")
 
 
 def test_group2_with_count_value_becomes_array():
@@ -122,6 +153,42 @@ def test_group2_can_be_a_field_def():
 def test_group2_is_not_part_of_the_base_lowering():
     with pytest.raises(LoweringError, match="unknown element <group2>"):
         lower_string('<icd><message name="m"><group2 name="g"/></message></icd>')
+
+
+# --- commandkey: an integer -------------------------------------------------
+
+
+def test_command_key_lowers_like_integer():
+    (field,) = lower_fields('<commandkey name="uniqueKey" bitCount="16"/>')
+
+    assert field == Int("uniqueKey", 16)
+
+
+def test_command_key_keeps_integer_options():
+    (field,) = lower_fields(
+        '<commandkey name="uniqueKey" bitCount="8" signed="true">'
+        "<label>Unique key</label></commandkey>"
+    )
+
+    assert field == Int("uniqueKey", 8, signed=True, meta=Meta(label="Unique key"))
+
+
+def test_command_key_can_be_a_field_def():
+    icd = lower_string(
+        '<icd><fieldDefs><group id="header"><commandkey name="uniqueKey" bitCount="16"/>'
+        '</group></fieldDefs><message name="m"><group name="header" ref="header"/></message></icd>',
+        lowering=ExampleLowering,
+    )
+
+    (header,) = icd.messages[0].body.fields
+    assert header.fields == (Int("uniqueKey", 16),)
+
+
+def test_command_key_is_not_part_of_the_base_lowering():
+    with pytest.raises(LoweringError, match="unknown element <commandkey>"):
+        lower_string(
+            '<icd><message name="m"><commandkey name="k" bitCount="16"/></message></icd>'
+        )
 
 
 # --- protocolled commands: a dialect-specific rule --------------------------
@@ -221,15 +288,15 @@ def test_base_dialect_has_no_protocolled_rule():
 
 DUPLICATE_UNITS = """
 <icd><fieldDefs>
-  <group id="systemIdRef" xsi:type="systemIdRef" bitCount="21">
+  <group id="SubsystemType" xsi:type="subsystemDef" bitCount="21">
     <system name="vehicle" value="1"><subsystem name="computer" value="1">
       <unit name="left" value="1"/><unit name="center" value="1"/>
     </subsystem></system>
   </group>
 </fieldDefs>
-<message name="a"><group name="systemId" ref="systemIdRef"/></message>
+<message name="a"><group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"/></message>
 <message name="b">
-  <group name="systemId" ref="systemIdRef"/>
+  <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"/>
   <union discrimField="../systemId">
     <system name="vehicle" value="1"><subsystem name="computer" value="1">
       <unit name="left" value="1"/><unit name="center" value="1"/>
@@ -243,7 +310,7 @@ def test_duplicate_unit_values_are_reported_once_at_first_use():
     found = {(i.code, i.path) for i in EXAMPLE.validate(EXAMPLE.lower([DUPLICATE_UNITS]))}
 
     assert found == {
-        # systemIdRef: left and center are both 1. Reported once, at the first
+        # SubsystemType: left and center are both 1. Reported once, at the first
         # use of the fieldDef...
         ("duplicate-domain-value", "a/systemId"),
         # ...and the union keyed by it has two cases with value (1, 1, 1).

@@ -325,6 +325,14 @@ def test_xsi_type_dispatches_to_dialect_method():
     assert icd.messages[0].body.fields == (Spare(3),)
 
 
+def test_xsi_type_on_a_ref_is_not_ignored():
+    with pytest.raises(LoweringError, match="unknown xsi:type 'mystery'"):
+        lower_string(
+            '<icd><fieldDefs><group id="d"><spare bitCount="8"/></group></fieldDefs>'
+            '<message name="m"><group name="g" ref="d" xsi:type="mystery"/></message></icd>'
+        )
+
+
 # --- namespace: the ICD's own uri and alias ---------------------------------
 
 
@@ -396,3 +404,63 @@ def test_lower_many_rejects_duplicate_namespace():
                 '<icd><namespace alias="a2">urn:a</namespace></icd>',
             ]
         )
+
+
+# --- error locations --------------------------------------------------------
+
+
+NESTED_ERROR = """<icd>
+  <message name="m">
+    <group name="g">
+      <scalar name="freq" scale="2"/>
+    </group>
+  </message>
+</icd>"""
+
+
+def test_error_reports_the_line_of_the_element():
+    with pytest.raises(LoweringError) as exc:
+        lower_string(NESTED_ERROR)
+
+    assert exc.value.line == 4
+    assert str(exc.value) == "line 4: missing required attribute 'bitCount' on <scalar name='freq'>"
+
+
+def test_error_in_a_field_def_reports_the_line_in_the_def():
+    text = (
+        "<icd>\n"
+        "  <fieldDefs>\n"
+        '    <group id="d">\n'
+        '      <integer name="x"/>\n'
+        "    </group>\n"
+        "  </fieldDefs>\n"
+        '  <message name="m"><group name="g" ref="d"/></message>\n'
+        "</icd>"
+    )
+
+    with pytest.raises(LoweringError, match="^line 4: missing required attribute 'bitCount'"):
+        lower_string(text)
+
+
+def test_error_on_a_message_reports_its_line():
+    with pytest.raises(LoweringError, match="^line 2: missing required attribute 'name' on <message>"):
+        lower_string("<icd>\n  <message/>\n</icd>")
+
+
+def test_file_name_and_line_together():
+    with pytest.raises(LoweringError) as exc:
+        lower_many([NESTED_ERROR], names=["real.xml"])
+
+    assert str(exc.value).startswith("real.xml:4: missing required attribute 'bitCount'")
+
+
+def test_elements_built_without_parse_have_no_line():
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring('<icd><message name="m"><scalar name="s"/></message></icd>')
+
+    with pytest.raises(LoweringError) as exc:
+        lower_many([root])
+
+    assert exc.value.line is None
+    assert str(exc.value) == "missing required attribute 'bitCount' on <scalar name='s'>"

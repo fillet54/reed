@@ -5,7 +5,7 @@
       <integer name="id" bitCount="16" />
       <integer name="key" bitCount="16" />
     </group>
-    <group id="systemIdRef" xsi:type="systemIdRef" bitCount="21">
+    <group id="SubsystemType" xsi:type="subsystemDef" bitCount="21">
       <system name="vehicle" value="1">
         <subsystem name="computer" value="1">
           <unit name="left" value="1"></unit>
@@ -31,7 +31,7 @@
     <group name="header" ref="header"></group>
     <union name="commandBody" discrimField="../header/id">
       <command name="power" discrimValue="1">
-        <group name="systemId" ref="systemIdRef"></group>
+        <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"></group>
         <integer name="mode" bitCount="1">
           <namedValues restrict="true">
             <namedValue name="ON" value="1" />
@@ -41,7 +41,7 @@
         <spare bitCount="10" />
        </command>
       <command name="ibit" discrimValue="2">
-        <group name="systemId" ref="systemIdRef"></group>
+        <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"></group>
        </command>
       <command name="changeFrequency" discrimValue="21">
         <scalar name="freq" bitCount="16" scale="1000" offset="2500">
@@ -56,7 +56,7 @@
     <group name="header" ref="header"></group>
     <union name="returnBody" discrimField="../header/id">
       <return name="status" discrimValue="1">
-        <group name="systemId" ref="systemIdRef"></group>
+        <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"></group>
         <union discrimField="../systemId">
           <system name="vehicle" value="1">
             <group name="summaryStatus">
@@ -94,7 +94,7 @@
         </union>
       </return>
       <return name="event" discrimValue="2">
-        <group name="systemId" ref="systemIdRef"></group>
+        <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"></group>
         <integer name="set" bitCount="1">
           <namedValues>
             <namedValue name="SET" value="1" />

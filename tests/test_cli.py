@@ -65,11 +65,24 @@ def test_example_dialect_on_example_icd(capsys):
 
 
 def test_lowering_error_names_the_file(capsys):
-    # The base dialect doesn't know xsi:type="systemIdRef".
+    # The base dialect doesn't know xsi:type="subsystemIDRef".
     code, _, err = check(capsys, EXAMPLE_ICD)
 
     assert code == 1
-    assert "example-icd.xml: unknown xsi:type 'systemIdRef'" in err
+    assert "example-icd.xml:34: unknown xsi:type 'subsystemIDRef' on <group name='systemId'>" in err
+
+
+def test_lowering_error_gives_file_and_line(tmp_path, capsys):
+    path = write(
+        tmp_path,
+        "real.xml",
+        '<icd>\n  <message name="m">\n    <scalar name="freq"/>\n  </message>\n</icd>',
+    )
+
+    code, _, err = check(capsys, path)
+
+    assert code == 1
+    assert f"{path}:3: missing required attribute 'bitCount' on <scalar name='freq'>" in err
 
 
 def test_invalid_xml_names_the_file(tmp_path, capsys):

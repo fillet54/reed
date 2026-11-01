@@ -268,12 +268,12 @@ def test_array_longer_than_its_count_allows_is_an_error():
 
 SYSTEM_STATUS = """
 <icd><fieldDefs>
-  <group id="systemIdRef" xsi:type="systemIdRef" bitCount="21">
+  <group id="SubsystemType" xsi:type="subsystemDef" bitCount="21">
     <system name="fuel" value="10"><subsystem name="tanks" value="1"/></system>
   </group>
 </fieldDefs>
 <message name="status">
-  <group name="systemId" ref="systemIdRef"/>
+  <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"/>
   <union discrimField="../systemId">
     <system name="fuel" value="10">
       <integer name="total" bitCount="8"/>

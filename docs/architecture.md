@@ -13,7 +13,7 @@ XML ──parse──▶ DOM ──lower──▶ IR ──link/validate──�
 ```
 
 1. **Parse.** ElementTree (or lxml for source line numbers). A real ICD is ~5 MB of XML, so the DOM (~45 MB) is held only until lowering finishes.
-2. **Lower** (one visitor per dialect). DOM → IR. Dialect concepts map onto IR nodes, e.g. `systemIdRef` becomes a `Struct` with a `Domain` tree.
+2. **Lower** (one visitor per dialect). DOM → IR. Dialect concepts map onto IR nodes, e.g. a `subsystemDef` becomes a `Struct` with a `Domain` tree.
 3. **Link / validate.** Every ref resolves across files, there are no cycles, declared `bitCount`s match computed sizes, and discriminator and count paths resolve.
 4. **Expand.** Split rules produce concrete messages. Expansion is lazy: a generator, or lookup by key.
 5. **Tools** read the IR through a visitor base that passes the path from the root down.

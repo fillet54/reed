@@ -7,14 +7,19 @@ stay as MessageRef.
 An ICD names itself with `<namespace alias="x">uri</namespace>`; `ref="x:name"`
 with its own alias resolves locally. Imports of other files (schemaLocation)
 will add more aliases.
+
+`parse` records each element's source line, so a LoweringError can say where
+it is: `real.xml:123: missing required attribute 'bitCount' on <scalar ...>`.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from contextlib import contextmanager
 from dataclasses import replace
 from xml.etree import ElementTree as ET
+from xml.parsers import expat
 
 from .ir import (
     VARIABLE,
@@ -43,7 +48,21 @@ META_TAGS = {"label", "description", "namedValues"}
 
 
 class LoweringError(ValueError):
-    pass
+    """A problem in an ICD. `line` is the source line of the element, when known."""
+
+    def __init__(self, message: str, line: int | None = None):
+        super().__init__(message)
+        self.message = message
+        self.line = line
+
+    def __str__(self):
+        return f"line {self.line}: {self.message}" if self.line else self.message
+
+
+class _Element(ET.Element):
+    """An element that remembers its source line."""
+
+    line: int | None = None
 
 
 def parse(text: str) -> ET.Element:
@@ -52,7 +71,42 @@ def parse(text: str) -> ET.Element:
         text = re.sub(
             r"<([A-Za-z_][\w.\-]*)", rf'<\1 xmlns:xsi="{XSI_NS}"', text, count=1
         )
-    return ET.fromstring(text)
+    parser = ET.XMLParser(target=ET.TreeBuilder(element_factory=_Element))
+    parser.feed(text)
+    root = parser.close()
+
+    # ElementTree doesn't track lines; a quick expat pass sees the same
+    # elements in the same (document) order.
+    for elem, line in zip(root.iter(), _start_lines(text)):
+        elem.line = line
+    return root
+
+
+def _start_lines(text: str) -> list[int]:
+    lines: list[int] = []
+    p = expat.ParserCreate()
+    p.StartElementHandler = lambda name, attrs: lines.append(p.CurrentLineNumber)
+    p.Parse(text, True)
+    return lines
+
+
+@contextmanager
+def _at(elem: ET.Element):
+    """Give an error from inside `elem` its line, unless something deeper did."""
+    try:
+        yield
+    except LoweringError as e:
+        if e.line is None:
+            e.line = getattr(elem, "line", None)
+        raise
+
+
+def _describe(elem: ET.Element) -> str:
+    """`<scalar name='freq'>`, for messages."""
+    for attr in ("name", "id"):
+        if elem.get(attr):
+            return f"<{_tag(elem)} {attr}={elem.get(attr)!r}>"
+    return f"<{_tag(elem)}>"
 
 
 def lower_string(text: str, lowering: type[Lowering] | None = None) -> Icd:
@@ -102,7 +156,10 @@ class _blame:
     def __exit__(self, exc_type, exc, tb):
         if exc is None or self.name is None:
             return False
-        if isinstance(exc, (LoweringError, ET.ParseError)):
+        if isinstance(exc, LoweringError):
+            where = f"{self.name}:{exc.line}" if exc.line else self.name
+            raise LoweringError(f"{where}: {exc.message}") from exc
+        if isinstance(exc, ET.ParseError):
             raise LoweringError(f"{self.name}: {exc}") from exc
         return False
 
@@ -176,22 +233,24 @@ class Lowering:
         )
 
     def message(self, elem: ET.Element) -> Message:
-        name = self.required(elem, "name")
-        body = Struct(name, self.fields(elem), meta=self.meta(elem))
-        return Message(key=(name,), body=body, namespace=self.namespace)
+        with _at(elem):
+            name = self.required(elem, "name")
+            body = Struct(name, self.fields(elem), meta=self.meta(elem))
+            return Message(key=(name,), body=body, namespace=self.namespace)
 
     def field(self, elem: ET.Element) -> Node:
-        xsi_type = elem.get(XSI_TYPE)
-        if xsi_type and not elem.get("ref"):
-            method = getattr(self, f"lower_type_{xsi_type}", None)
-            if method is None:
-                raise LoweringError(f"unknown xsi:type {xsi_type!r} on <{_tag(elem)}>")
-            return method(elem)
+        with _at(elem):
+            xsi_type = elem.get(XSI_TYPE)
+            if xsi_type:  # on a ref too: never silently ignored
+                method = getattr(self, f"lower_type_{xsi_type}", None)
+                if method is None:
+                    raise LoweringError(f"unknown xsi:type {xsi_type!r} on {_describe(elem)}")
+                return method(elem)
 
-        method = getattr(self, f"lower_{_tag(elem)}", None)
-        if method is None:
-            raise LoweringError(f"unknown element <{_tag(elem)}>")
-        return method(elem)
+            method = getattr(self, f"lower_{_tag(elem)}", None)
+            if method is None:
+                raise LoweringError(f"unknown element <{_tag(elem)}>")
+            return method(elem)
 
     def fields(self, elem: ET.Element) -> tuple[Node, ...]:
         return tuple(self.field(c) for c in elem if _tag(c) not in META_TAGS)
@@ -246,15 +305,16 @@ class Lowering:
         yield self.case(elem)
 
     def case(self, elem: ET.Element) -> Case:
-        name = self.required(elem, "name")
-        value = _int(self.required(elem, "discrimValue"))
+        with _at(elem):
+            name = self.required(elem, "name")
+            value = _int(self.required(elem, "discrimValue"))
 
-        if elem.get("ref"):
-            body = self.ref(elem)
-        else:
-            body = Struct(name, self.fields(elem), meta=self.meta(elem))
+            if elem.get("ref"):
+                body = self.ref(elem)
+            else:
+                body = Struct(name, self.fields(elem), meta=self.meta(elem))
 
-        return Case(name, _tag(elem), value, body)
+            return Case(name, _tag(elem), value, body)
 
     # --- refs ---------------------------------------------------------------
 
@@ -312,7 +372,10 @@ class Lowering:
     def required(self, elem: ET.Element, attr: str) -> str:
         value = elem.get(attr)
         if value is None:
-            raise LoweringError(f"missing required attribute {attr!r} on <{_tag(elem)}>")
+            raise LoweringError(
+                f"missing required attribute {attr!r} on {_describe(elem)}",
+                line=getattr(elem, "line", None),
+            )
         return value
 
     def bits(self, elem: ET.Element):

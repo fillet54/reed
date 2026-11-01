@@ -1,10 +1,13 @@
 """The example dialect (tests/data/example-icd.xml).
 
-Adds system IDs: a 21-bit `systemIdRef` group (7 bits each for system,
-subsystem and unit) whose system/subsystem/unit children list the legal values,
-and unions keyed by a system ID whose cases follow that same hierarchy.
+Adds system IDs: a fieldDef with xsi:type="subsystemDef" is a 21-bit group
+(7 bits each for system, subsystem and unit) whose system/subsystem/unit
+children list the legal values. Fields use it with
+`<group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"/>`.
+Unions keyed by a system ID have cases that follow that same hierarchy.
 
-Also: <group2> is another spelling of <group>, and a command with
+Also: <group2> is another spelling of <group>, <commandkey> (the unique key
+field) is an <integer>, and a command with
 protocolled="false" limits its whole message to 50 bytes.
 
 Words are 16 bits: every message is a whole number of words, the rest of the
@@ -18,7 +21,7 @@ from xml.etree import ElementTree as ET
 
 from ..dialect import Dialect
 from ..ir import Case, Domain, Int, LayoutPolicy, Struct
-from ..lower import META_TAGS, Lowering, _int, _tag
+from ..lower import META_TAGS, XSI_TYPE, Lowering, LoweringError, _int, _tag
 from ..validate import BASE_RULES, rule
 
 LEVELS = ("system", "subsystem", "unit")
@@ -28,8 +31,11 @@ LEVEL_BITS = 7
 class ExampleLowering(Lowering):
     # <group2> means exactly the same as <group> in this dialect.
     lower_group2 = Lowering.lower_group
+    # <commandkey> (used for the unique key field) is an <integer>.
+    lower_commandkey = Lowering.lower_integer
 
-    def lower_type_systemIdRef(self, elem: ET.Element) -> Struct:
+    def lower_type_subsystemDef(self, elem: ET.Element) -> Struct:
+        """The definition: the ID's layout and its legal values."""
         return Struct(
             elem.get("name") or elem.get("id") or "",
             tuple(Int(level, LEVEL_BITS) for level in LEVELS),
@@ -37,6 +43,19 @@ class ExampleLowering(Lowering):
             domain=tuple(self.domain(c) for c in elem if _tag(c) == "system"),
             meta=self.meta(elem),
         )
+
+    def lower_type_subsystemIDRef(self, elem: ET.Element) -> Struct:
+        """A use of a subsystemDef: an ordinary ref, checked to point at one."""
+        ref = elem.get("ref")
+        if not ref:
+            raise LoweringError(
+                f"<{_tag(elem)} name={elem.get('name')!r}>: xsi:type subsystemIDRef needs a ref"
+            )
+        module, key = self.module_for(ref)
+        target = module.def_elems.get(key)
+        if target is not None and target.get(XSI_TYPE) != "subsystemDef":
+            raise LoweringError(f"subsystemIDRef {ref!r} is not a subsystemDef")
+        return self.ref(elem)
 
     def domain(self, elem: ET.Element) -> Domain:
         return Domain(
