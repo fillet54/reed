@@ -356,3 +356,87 @@ def test_example_icd_is_valid():
         icds = EXAMPLE.lower([f.read()])
 
     assert EXAMPLE.validate(icds) == []
+
+
+# --- <apCommand> --------------------------------------------------------------
+
+AP_COMMANDS = (
+    '<message name="Command"><integer name="CommandNumber" bitCount="8"/>'
+    '<union name="CommandBody" discrimField="../CommandNumber">'
+    '<command name="power" discrimValue="1"><integer name="on" bitCount="8"/></command>'
+    '<command name="storeAp" discrimValue="2">'
+    '  <integer name="CommandNumber" bitCount="8"/><apCommand name="stored"/>'
+    "</command>"
+    "</union></message>"
+)
+
+
+def ap_icd(extra: str = ""):
+    return lower_string(f"<icd>{AP_COMMANDS}{extra}</icd>", lowering=ExampleLowering)
+
+
+def test_ap_command_is_a_union_of_the_top_level_commands():
+    icd = ap_icd(
+        '<message name="schedule"><integer name="CommandNumber" bitCount="8"/>'
+        '<apCommand name="cmd"/></message>'
+    )
+
+    _, cmd = icd.messages[1].body.fields
+    assert isinstance(cmd, Union)
+    assert (cmd.name, cmd.discrim) == ("cmd", "../CommandNumber")
+    command_body = icd.messages[0].body.fields[1]
+    assert [c.name for c in cmd.cases] == ["power", "storeAp"]
+    assert cmd.cases[0] == command_body.cases[0]
+
+
+def test_ap_command_discrim_field_can_be_given():
+    icd = ap_icd(
+        '<message name="schedule"><integer name="num" bitCount="8"/>'
+        '<apCommand name="cmd" discrimField="../num"/></message>'
+    )
+
+    assert icd.messages[1].body.fields[1].discrim == "../num"
+
+
+def test_ap_command_inside_a_command_holds_the_commands_one_level_deep():
+    command_body = ap_icd().messages[0].body.fields[1]
+
+    stored = command_body.cases[1].body.fields[1]
+    assert [c.name for c in stored.cases] == ["power", "storeAp"]
+    nested = stored.cases[1].body.fields[1]
+    assert nested.cases == ()  # a stored command can't itself store one
+
+
+def test_ap_command_round_trips():
+    from reed.codec import decode, encode
+
+    icds = EXAMPLE.lower(
+        [
+            f"<icd>{AP_COMMANDS}"
+            '<message name="schedule"><integer name="CommandNumber" bitCount="8"/>'
+            '<apCommand name="cmd"/></message></icd>'
+        ]
+    )
+    schedule = icds[""].messages[1]
+    value = {"CommandNumber": 1, "cmd": {"power": {"on": 7}}}
+
+    data = encode(schedule, value, icds)
+
+    assert data == bytes([1, 7])
+    assert decode(schedule, data, icds) == value
+
+
+def test_ap_command_without_its_command_message_is_an_error():
+    with pytest.raises(LoweringError, match="apCommand: no message 'Command'"):
+        lower_string(
+            '<icd><message name="m"><integer name="CommandNumber" bitCount="8"/>'
+            '<apCommand name="cmd"/></message></icd>',
+            lowering=ExampleLowering,
+        )
+
+
+def test_ap_command_is_not_part_of_the_base_lowering():
+    with pytest.raises(LoweringError, match="unknown element <apCommand>"):
+        lower_string(
+            '<icd><message name="m"><apCommand name="cmd"/></message></icd>', lowering=BASE.lowering
+        )

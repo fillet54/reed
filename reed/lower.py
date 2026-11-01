@@ -54,6 +54,7 @@ from .ir import (
     Union,
 )
 from .issues import Issue
+from .paths import resolve, root_stack
 
 XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
 XSI_TYPE = f"{{{XSI_NS}}}type"
@@ -121,60 +122,106 @@ def _at(elem: ET.Element):
         raise
 
 
-class _FromUnion:
-    """Fill namedValues fromUnion="U" from union U's cases, per message.
+class _Fill:
+    """Fill in what needs the whole message, after it is lowered:
 
-    U is looked up by name in the groups enclosing the field, innermost first,
-    so a shared fieldDef (e.g. a header with the id) gets the union of the
-    message it's used in. Only the path down to such a field is copied.
+    - namedValues fromUnion="U": the cases of union U, looked up by name in
+      the groups enclosing the field, innermost first, so a shared fieldDef
+      (e.g. a header with the id) gets the union of the message it's used in;
+    - fromUnion="//Msg/path/to/union" (or "//alias:Msg/...") instead names a
+      union by its absolute path, from a message of this ICD (or an import);
+    - a union placeholder from `Lowering.cases_from` (e.g. <apCommand>) gets
+      the cases of the union at its absolute path. A placeholder met again
+      inside those cases is left with none: the IR is a tree, so a stored
+      command holds the commands one level deep.
+
+    Only the path down to what changes is copied.
     """
 
     def __init__(self, lowering: Lowering):
         self.lowering = lowering
 
-    def fill(self, node, scopes: tuple, names: tuple):
+    def fill(self, node, scopes: tuple, names: tuple, active: frozenset = frozenset()):
         if isinstance(node, Int):
             return self.integer(node, scopes, names)
         if isinstance(node, Struct):
             inner = scopes + (node,)
             fields = tuple(
-                self.fill(f, inner, names + ((f.name,) if getattr(f, "name", "") else ()))
+                self.fill(f, inner, names + ((f.name,) if getattr(f, "name", "") else ()), active)
                 for f in node.fields
             )
             return node if _same(fields, node.fields) else replace(node, fields=fields)
         if isinstance(node, Union):
+            source = node.meta.prop(CASES_FROM)
+            if source is not None:
+                node, active = self.placeholder(node, source, active)
             cases = tuple(
-                replace(c, body=self.fill(c.body, scopes, names + (c.name,))) for c in node.cases
+                replace(c, body=self.fill(c.body, scopes, names + (c.name,), active))
+                for c in node.cases
             )
             same = all(a.body is b.body for a, b in zip(cases, node.cases))
             return node if same else replace(node, cases=cases)
         if isinstance(node, Array):
-            element = self.fill(node.element, scopes, names)
+            element = self.fill(node.element, scopes, names, active)
             return node if element is node.element else replace(node, element=element)
         return node
+
+    def placeholder(self, node: Union, source, active: frozenset):
+        path, what, line = source
+        found, problem = self.absolute(path)
+        if problem:
+            raise LoweringError(f"{what}: {problem}", line=line)
+        key, union = found
+        if key in active:
+            return replace(node, cases=()), active
+        return replace(node, cases=union.cases), active | {key}
 
     def integer(self, node: Int, scopes: tuple, names: tuple) -> Int:
         enum = node.enum
         if enum is None or not enum.from_union or enum.from_union.startswith("#"):
             return node  # "#id" was resolved when lowered
-        for scope in reversed(scopes):
-            for f in scope.fields:
-                if isinstance(f, Union) and f.name == enum.from_union:
-                    cases = tuple(
-                        NamedValue(c.name, c.value) for c in f.cases if isinstance(c.value, int)
-                    )
-                    return replace(node, enum=replace(enum, values=cases + enum.values))
+        where = f"namedValues fromUnion {enum.from_union!r}"
 
-        self.lowering.issues.append(
-            Issue(
-                "warning",
-                "from-union-not-found",
-                "/".join(names),
-                f"namedValues fromUnion {enum.from_union!r}: no union of that name "
-                "encloses this field",
+        union, problem = None, ""
+        if enum.from_union.startswith("//"):
+            found, problem = self.absolute(enum.from_union)
+            union = found[1] if found else None
+        else:
+            union = next(
+                (
+                    f
+                    for scope in reversed(scopes)
+                    for f in scope.fields
+                    if isinstance(f, Union) and f.name == enum.from_union
+                ),
+                None,
             )
-        )
-        return node
+            problem = "no union of that name encloses this field"
+
+        if union is None:
+            self.lowering.issues.append(
+                Issue("warning", "from-union-not-found", "/".join(names), f"{where}: {problem}")
+            )
+            return node
+        cases = tuple(NamedValue(c.name, c.value) for c in union.cases if isinstance(c.value, int))
+        return replace(node, enum=replace(enum, values=cases + enum.values))
+
+    def absolute(self, path: str):
+        """((namespace, message, path), union) for "//Msg/path", or (None, problem)."""
+        first, _, rest = path[2:].partition("/")
+        module, name = self.lowering.module_for(first)
+        if name not in module.message_elems:
+            return None, f"no message {name!r}"
+        frame = resolve(rest, root_stack(module.raw_body(name), name))
+        if frame is None or not rest:
+            return None, f"no field {rest!r} in message {name!r}"
+        if not isinstance(frame.node, Union):
+            return None, f"{rest!r} in message {name!r} is not a union"
+        return ((module.namespace, name, rest), frame.node), ""
+
+
+# Meta prop of a union placeholder: (absolute path, what it is, source line).
+CASES_FROM = "cases-from"
 
 
 def _renamed(node, name: str):
@@ -310,7 +357,7 @@ class Catalog:
 
     def __init__(self):
         self.modules: dict[str, Lowering] = {}
-        self.from_union = False  # some namedValues use fromUnion: messages need filling
+        self.needs_fill = False  # fromUnion or a cases_from placeholder: see _Fill
         self.in_progress: list[tuple[str, str]] = []  # fieldDefs being lowered
 
 
@@ -340,6 +387,8 @@ class Lowering:
         self.alias = ""
         self.def_elems: dict[str, ET.Element] = {}
         self.message_names: set[str] = set()
+        self.message_elems: dict[str, ET.Element] = {}
+        self.raw: dict[str, Struct] = {}  # message bodies before _Fill
 
         namespaces = [c for c in root if _tag(c) == "namespace"]
         if len(namespaces) > 1:
@@ -382,6 +431,7 @@ class Lowering:
                     self.def_elems[d.get("id")] = d
             elif _tag(child) == "message":
                 self.message_names.add(self.required(child, "name"))
+                self.message_elems[child.get("name")] = child
 
         self.defs: dict[tuple, Node] = {}  # (key, overrides) -> lowered fieldDef
 
@@ -402,10 +452,18 @@ class Lowering:
     def message(self, elem: ET.Element) -> Message:
         with _at(elem):
             name = self.required(elem, "name")
-            body = Struct(name, self.fields(elem), meta=self.meta(elem))
-            if self.catalog.from_union:
-                body = _FromUnion(self).fill(body, (), (name,))
+            body = self.raw_body(name, elem)
+            if self.catalog.needs_fill:
+                body = _Fill(self).fill(body, (), (name,))
             return Message(key=(name,), body=body, namespace=self.namespace)
+
+    def raw_body(self, name: str, elem: ET.Element | None = None) -> Struct:
+        """Message `name` as lowered, before `_Fill`. Memoized."""
+        if name not in self.raw:
+            elem = self.message_elems[name] if elem is None else elem
+            with _at(elem):
+                self.raw[name] = Struct(name, self.fields(elem), meta=self.meta(elem))
+        return self.raw[name]
 
     def field(self, elem: ET.Element) -> Node:
         with _at(elem):
@@ -481,6 +539,22 @@ class Lowering:
             discrim,
             tuple(case for c in elem if _tag(c) not in META_TAGS for case in self.cases(c)),
             meta=self.meta(elem),
+        )
+
+    def cases_from(self, elem: ET.Element, path: str, discrim: str, what: str) -> Union:
+        """A union with the cases of the union at absolute `path` ("//Msg/...").
+
+        Dialects use it for tags that stand for a known union (<apCommand>).
+        The cases are filled in once the message is lowered (see _Fill).
+        """
+        self.catalog.needs_fill = True
+        meta = self.meta(elem)
+        source = (path, what, getattr(elem, "line", None))
+        return Union(
+            elem.get("name", ""),
+            discrim,
+            (),
+            meta=replace(meta, props=meta.props + ((CASES_FROM, source),)),
         )
 
     def cases(self, elem: ET.Element):
@@ -710,7 +784,7 @@ class Lowering:
         if from_union.startswith("#"):
             values = self.union_def_values(nv, from_union) + values
         elif from_union:
-            self.catalog.from_union = True  # filled in per message
+            self.catalog.needs_fill = True  # filled in per message
         return Enum(values, restrict=self.flag(nv, "restrict"), from_union=from_union)
 
     def union_def_values(self, nv: ET.Element, from_union: str) -> tuple[NamedValue, ...]:

@@ -1027,3 +1027,74 @@ def test_elements_built_without_parse_have_no_line():
 
     assert exc.value.line is None
     assert str(exc.value) == "missing required attribute 'bitCount' on <scalar name='s'>"
+
+
+# --- fromUnion="//Message/path" ----------------------------------------------
+
+
+COMMAND_MSG = (
+    '<message name="Command"><integer name="CommandNumber" bitCount="8"/>'
+    '<union name="CommandBody" discrimField="../CommandNumber">'
+    '<command name="power" discrimValue="1"/><command name="ibit" discrimValue="2"/>'
+    "</union></message>"
+)
+
+
+def test_from_union_by_absolute_path_in_another_message():
+    icd = lower_string(
+        "<icd>" + COMMAND_MSG + '<message name="log"><integer name="n" bitCount="8">'
+        '<namedValues fromUnion="//Command/CommandBody"/></integer></message></icd>'
+    )
+
+    (n,) = icd.messages[1].body.fields
+    assert n.enum.values == (NamedValue("power", 1), NamedValue("ibit", 2))
+    assert icd.issues == ()
+
+
+def test_from_union_by_absolute_path_in_its_own_message():
+    icd = lower_string(
+        "<icd>"
+        + COMMAND_MSG.replace(
+            '<integer name="CommandNumber" bitCount="8"/>',
+            '<integer name="CommandNumber" bitCount="8">'
+            '<namedValues fromUnion="//Command/CommandBody"/></integer>',
+        )
+        + "</icd>"
+    )
+
+    number = icd.messages[0].body.fields[0]
+    assert [v.name for v in number.enum.values] == ["power", "ibit"]
+
+
+def test_from_union_by_absolute_path_through_an_import():
+    main = (
+        '<icd><namespace>urn:main</namespace>'
+        '<refSchemaLocation alias="cmds">urn:cmds cmds.xsd</refSchemaLocation>'
+        '<message name="log"><integer name="n" bitCount="8">'
+        '<namedValues fromUnion="//cmds:Command/CommandBody"/></integer></message></icd>'
+    )
+    cmds = "<icd><namespace>urn:cmds</namespace>" + COMMAND_MSG + "</icd>"
+
+    icds = lower_many([main, cmds])
+
+    (n,) = icds["urn:main"].messages[0].body.fields
+    assert [v.name for v in n.enum.values] == ["power", "ibit"]
+
+
+@pytest.mark.parametrize(
+    "path, message",
+    [
+        ("//Nope/CommandBody", "no message 'Nope'"),
+        ("//Command/Missing", "no field 'Missing' in message 'Command'"),
+        ("//Command/CommandNumber", "'CommandNumber' in message 'Command' is not a union"),
+    ],
+)
+def test_bad_absolute_from_union_is_a_warning(path, message):
+    icd = lower_string(
+        "<icd>" + COMMAND_MSG + '<message name="log"><integer name="n" bitCount="8">'
+        f'<namedValues fromUnion="{path}"/></integer></message></icd>'
+    )
+
+    (issue,) = icd.issues
+    assert (issue.code, issue.path) == ("from-union-not-found", "log/n")
+    assert issue.message == f"namedValues fromUnion {path!r}: {message}"

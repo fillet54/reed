@@ -7,8 +7,9 @@ children list the legal values. Fields use it with
 Unions keyed by a system ID have cases that follow that same hierarchy.
 
 Also: <group2> is another spelling of <group>, <commandkey> (the unique key
-field) and <mpmCheck> (a checksum field) are <integer>s, and a command with
-protocolled="false" limits its whole message to 50 bytes.
+field) and <mpmCheck> (a checksum field) are <integer>s, <apCommand> is a
+union with the cases of //Command/CommandBody keyed by ../CommandNumber,
+and a command with protocolled="false" limits its whole message to 50 bytes.
 
 Words are 16 bits: every message is a whole number of words, the rest of the
 last one an implicit spare.
@@ -35,6 +36,16 @@ class ExampleLowering(Lowering):
     lower_commandkey = Lowering.lower_integer
     # <mpmCheck> (a checksum field) is an <integer>.
     lower_mpmCheck = Lowering.lower_integer
+
+    # <apCommand> stands for a union of the top-level commands: the cases of
+    # this union, picked by the CommandNumber beside it unless it gives a
+    # discrimField of its own.
+    AP_COMMAND_UNION = "//Command/CommandBody"
+    AP_COMMAND_DISCRIM = "../CommandNumber"
+
+    def lower_apCommand(self, elem: ET.Element):
+        discrim = elem.get("discrimField", self.AP_COMMAND_DISCRIM)
+        return self.cases_from(elem, self.AP_COMMAND_UNION, discrim, what="apCommand")
 
     def lower_type_subsystemDef(self, elem: ET.Element) -> Struct:
         """The definition: the ID's layout and its legal values."""
