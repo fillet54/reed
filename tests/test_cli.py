@@ -75,15 +75,15 @@ def test_example_dialect_on_example_icd(capsys):
     code, out, _ = check(capsys, "--dialect", "example", EXAMPLE_ICD)
 
     assert code == 0
-    assert "2 messages, 0 errors, 0 warnings" in out
+    assert "3 messages, 0 errors, 0 warnings" in out  # test-icd.xml comes in by import
 
 
 def test_lowering_error_names_the_file(capsys):
-    # The base dialect doesn't know xsi:type="subsystemIDRef".
+    # The base dialect doesn't know <commandkey>.
     code, _, err = check(capsys, EXAMPLE_ICD)
 
     assert code == 1
-    assert "example-icd.xml:34: unknown xsi:type 'subsystemIDRef' on <group name='systemId'>" in err
+    assert "example-icd.xml:16: unknown element <commandkey>" in err
 
 
 def test_lowering_error_gives_file_and_line(tmp_path, capsys):
@@ -125,10 +125,11 @@ def test_unknown_dialect_is_a_usage_error(capsys):
 def test_sizes_lists_messages_and_their_cases(capsys):
     code, out, _ = check(capsys, "--dialect", "example", "--sizes", EXAMPLE_ICD)
 
-    assert "command  48–64 bits" in out
-    assert "  power  64 bits" in out
-    assert "  ibit  64 bits (53 used)" in out
-    assert "return  64–96 bits (53–85 bits used)" in out
+    assert "Command  80–368 bits (72–368 bits used)" in out
+    assert "  power  96 bits" in out
+    assert "  TestCommand  96–112 bits" in out
+    assert "Return  80–2112 bits (72–2112 bits used)" in out
+    assert "TestCommand  32–48 bits" in out
 
 
 def test_stats_reports_time_and_memory(capsys):
@@ -152,15 +153,15 @@ def test_expand_prints_the_variant_tree(capsys):
 
     assert code == 0
     lines = out.splitlines()
-    assert lines[:4] == [
-        "command  (command)  48–64 bits",
-        "├─ command/power  (command, 1)  64 bits",
-        "├─ command/ibit  (command, 2)  64 bits (53 used)",
-        "└─ command/changeFrequency  (command, 21)  48 bits",
+    assert lines[:3] == [
+        "Command  (Command)  80–368 bits (72–368 bits used)",
+        "├─ Command/power  (Command, 1)  96 bits",
+        "├─ Command/gimbalTrim  (Command, 2)  128 bits",
     ]
-    assert "│  ├─ return/status/fuel  (return, 1, (10, 0, 0))  96 bits (85 used)" in lines
-    assert "│  └─ return/status/fuel.tanks  (return, 1, (10, 1, 0))  80 bits (69 used)" in lines
-    assert lines[-1] == "└─ return/event  (return, 2)  80 bits (69 used)"
+    assert "└─ Command/default  (Command, default)  80 bits" in lines
+    assert "│  ├─ Return/status/GNC  (Return, 1, (1, 0, 0))  112 bits" in lines
+    assert "│  └─ Return/status/EPS.fuelCell.fc3  (Return, 1, (4, 1, 3))  128 bits" in lines
+    assert lines[-1] == "└─ TestCommand/memoryCheck  (TestCommand, 3)  48 bits"
 
 
 def test_expand_refuses_an_icd_with_errors(tmp_path, capsys):

@@ -82,10 +82,10 @@ def test_old_system_id_ref_type_is_gone():
         )
 
 
-def test_union_keyed_by_system_id_flattens_to_cases_per_level():
+def test_union_keyed_by_system_id_flattens_to_one_case_per_level_with_fields():
     _, union = lower_fields(
         '<group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"/>'
-        '<union discrimField="../systemId">'
+        '<union discrimField="../systemId" xsi:type="subsystemRef">'
         '  <system name="vehicle" value="1">'
         '    <integer name="aliveCount" bitCount="16"/>'
         '    <subsystem name="computer" value="1">'
@@ -98,12 +98,207 @@ def test_union_keyed_by_system_id_flattens_to_cases_per_level():
     assert union == Union(
         "",
         "../systemId",
-        (
+        meta=Meta(props=(("subsystem-def", (("", "SubsystemType"), "SubsystemType")),)),
+        cases=(
             Case("vehicle", "system", (1, 0, 0), Struct("vehicle", (Int("aliveCount", 16),))),
-            Case("vehicle.computer", "subsystem", (1, 1, 0), Struct("computer", ())),
             Case("vehicle.computer.left", "unit", (1, 1, 1), Struct("left", (Int("version", 16),))),
         ),
     )
+
+
+def system_union(tree: str, **attrs) -> Union:
+    _, union = lower_fields(
+        '<group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"/>'
+        f'<union discrimField="../systemId" xsi:type="subsystemRef">{tree}</union>'
+    )
+    return union
+
+
+def test_a_subsystem_with_fields_is_a_case_for_all_its_units():
+    union = system_union(
+        '<system name="vehicle" value="1">'
+        '  <subsystem name="computer" value="1"><integer name="temp" bitCount="8"/>'
+        '    <unit name="left" value="1"/>'
+        "  </subsystem>"
+        "</system>"
+    )
+
+    assert [(c.name, c.value) for c in union.cases] == [
+        ("vehicle.computer", (1, 1, 0)),
+        ("vehicle.computer.left", (1, 1, 1)),
+    ]
+
+
+def test_a_level_without_fields_is_not_a_case():
+    union = system_union(
+        '<system name="vehicle" value="1">'
+        '  <subsystem name="computer" value="1"><integer name="temp" bitCount="8"/></subsystem>'
+        "</system>"
+    )
+
+    assert [c.value for c in union.cases] == [(1, 1, 0)]  # no (1, 0, 0)
+
+
+def test_a_unit_is_always_a_case_even_without_fields():
+    union = system_union(
+        '<system name="vehicle" value="1"><subsystem name="computer" value="1">'
+        '<unit name="left" value="1"/></subsystem></system>'
+    )
+
+    assert union.cases == (
+        Case("vehicle.computer.left", "unit", (1, 1, 1), Struct("left", ())),
+    )
+
+
+def test_system_union_keeps_its_name_and_meta():
+    _, union = lower_fields(
+        '<group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"/>'
+        '<union name="body" discrimField="../systemId" xsi:type="subsystemRef">'
+        "<label>Body</label>"
+        '<system name="fuel" value="10"><integer name="total" bitCount="8"/></system>'
+        "</union>"
+    )
+
+    assert (union.name, union.meta.label, len(union.cases)) == ("body", "Body", 1)
+
+
+def test_system_tree_in_a_plain_union_is_an_error():
+    with pytest.raises(LoweringError, match='<system> in a union needs xsi:type="subsystemRef"'):
+        lower_fields(
+            '<integer name="id" bitCount="8"/><union discrimField="../id">'
+            '<system name="fuel" value="10"/></union>'
+        )
+
+
+def test_subsystem_ref_only_applies_to_a_union():
+    with pytest.raises(LoweringError, match='xsi:type="subsystemRef" only applies to <union>'):
+        lower_fields('<group name="g" xsi:type="subsystemRef"/>')
+
+
+def test_subsystem_ref_union_holds_only_systems():
+    with pytest.raises(LoweringError, match="a subsystemRef union holds <system>s, not <command>"):
+        system_union('<command name="power" discrimValue="1"/>')
+
+
+def test_system_union_takes_its_values_from_the_subsystem_def():
+    union = system_union(
+        '<system name="fuel"><integer name="total" bitCount="8"/></system>'
+        '<system name="vehicle"><subsystem name="computer">'
+        '<unit name="right"/></subsystem></system>'
+    )
+
+    assert [(c.name, c.value) for c in union.cases] == [
+        ("fuel", (10, 0, 0)),
+        ("vehicle.computer.right", (1, 1, 2)),
+    ]
+
+
+def test_system_case_meta_is_its_own():
+    union = system_union('<system name="fuel"><integer name="total" bitCount="8"/></system>')
+
+    assert union.cases[0].meta == Meta()
+
+
+@pytest.mark.parametrize(
+    "tree, error",
+    [
+        ('<system name="water"/>', "no system 'water' in subsystemDef 'SubsystemType'"),
+        (
+            '<system name="vehicle"><subsystem name="radio"/></system>',
+            "no subsystem 'radio' under vehicle in subsystemDef 'SubsystemType'",
+        ),
+        (
+            '<system name="vehicle"><subsystem name="computer"><unit name="top"/></subsystem>'
+            "</system>",
+            "no unit 'top' under vehicle.computer in subsystemDef 'SubsystemType'",
+        ),
+        (
+            '<system name="fuel" value="11"><integer name="total" bitCount="8"/></system>',
+            "system 'fuel' has value 11, but 10 in subsystemDef 'SubsystemType'",
+        ),
+    ],
+)
+def test_bad_system_tree_is_an_error(tree, error):
+    with pytest.raises(LoweringError, match=error):
+        system_union(tree)
+
+
+def system_issues(body: str):
+    icd = lower_string(
+        f"<icd><fieldDefs>{SYSTEM_ID_DEF}</fieldDefs>"
+        f'<message name="m">{body}</message></icd>',
+        lowering=ExampleLowering,
+    )
+    return [(i.severity, i.code, i.path, i.message) for i in EXAMPLE.validate({"": icd})]
+
+
+def test_system_union_discrim_must_be_a_subsystem_id():
+    assert system_issues(
+        '<integer name="id" bitCount="8"/>'
+        '<union discrimField="../id" xsi:type="subsystemRef">'
+        '<system name="fuel"><integer name="total" bitCount="8"/></system></union>'
+    ) == [
+        (
+            "error",
+            "subsystem-ref-discrim",
+            "m/(union)",
+            "discrimField '../id' is not a subsystemIDRef of 'SubsystemType', "
+            "where this union's values come from",
+        )
+    ]
+
+
+def test_system_union_discrim_must_resolve():
+    codes = [i[1] for i in system_issues(
+        '<union discrimField="../nope" xsi:type="subsystemRef">'
+        '<system name="fuel"><integer name="total" bitCount="8"/></system></union>'
+    )]
+
+    assert codes == ["unresolved-path"]
+
+
+def test_system_union_with_a_good_discrim_is_valid():
+    assert system_issues(
+        '<group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"/>'
+        '<union discrimField="../systemId" xsi:type="subsystemRef">'
+        '<system name="fuel"><integer name="total" bitCount="8"/></system></union>'
+    ) == []
+
+
+def test_system_union_needs_a_single_subsystem_def():
+    second = SYSTEM_ID_DEF.replace('id="SubsystemType"', 'id="OtherType"')
+
+    with pytest.raises(
+        LoweringError,
+        match="a subsystemRef union takes its values from the subsystemDef, "
+        "but 2 are loaded: SubsystemType, OtherType",
+    ):
+        lower_string(
+            f"<icd><fieldDefs>{SYSTEM_ID_DEF}{second}</fieldDefs><message name=\"m\">"
+            '<group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"/>'
+            '<union discrimField="../systemId" xsi:type="subsystemRef">'
+            '<system name="fuel"/></union></message></icd>',
+            lowering=ExampleLowering,
+        )
+
+
+def test_system_union_finds_the_subsystem_def_in_an_imported_icd():
+    support = (
+        '<icd><namespace alias="sup">urn:support</namespace>'
+        f"<fieldDefs>{SYSTEM_ID_DEF}</fieldDefs></icd>"
+    )
+    main = (
+        "<icd><namespace>urn:main</namespace>"
+        '<message name="m"><group name="systemId" ref="sup:SubsystemType" xsi:type="subsystemIDRef"/>'
+        '<union discrimField="../systemId" xsi:type="subsystemRef">'
+        '<system name="fuel"><integer name="total" bitCount="8"/></system></union></message></icd>'
+    )
+
+    icds = EXAMPLE.lower([main, support])
+
+    union = icds["urn:main"].messages[0].body.fields[1]
+    assert union.cases[0].value == (10, 0, 0)
+    assert EXAMPLE.validate(icds) == []
 
 
 def test_example_dialect_still_lowers_plain_command_unions():
@@ -191,37 +386,70 @@ def test_command_key_is_not_part_of_the_base_lowering():
         )
 
 
-# --- mpmCheck: an integer (a checksum field) --------------------------------
+def test_timecsecs_lowers_like_integer():
+    (field,) = lower_fields('<timecsecs name="time" bitCount="32"/>')
+
+    assert field == Int("time", 32)
 
 
-def test_mpm_check_lowers_like_integer():
-    (field,) = lower_fields('<mpmCheck name="checksum" bitCount="16"/>')
-
-    assert field == Int("checksum", 16)
-
-
-def test_mpm_check_keeps_integer_options():
+def test_timecsecs_keeps_integer_options():
     (field,) = lower_fields(
-        '<mpmCheck name="checksum" bitCount="16"><label>Checksum</label>'
-        "<default>0</default></mpmCheck>"
+        '<timecsecs name="time" bitCount="32"><label>Time</label>'
+        "<default>0</default></timecsecs>"
     )
 
-    assert field == Int("checksum", 16, meta=Meta(label="Checksum"), default=0)
+    assert field == Int("time", 32, meta=Meta(label="Time"), default=0)
 
 
-def test_mpm_check_can_be_a_field_def():
+def test_timecsecs_can_be_a_field_def():
     icd = lower_string(
-        '<icd><fieldDefs><mpmCheck id="check" bitCount="16"/></fieldDefs>'
-        '<message name="m"><mpmCheck name="checksum" ref="check"/></message></icd>',
+        '<icd><fieldDefs><timecsecs id="t" bitCount="32"/></fieldDefs>'
+        '<message name="m"><timecsecs name="time" ref="t"/></message></icd>',
         lowering=ExampleLowering,
     )
 
-    assert icd.messages[0].body.fields == (Int("checksum", 16, meta=Meta(origin=("", "check"))),)
+    assert icd.messages[0].body.fields == (Int("time", 32, meta=Meta(origin=("", "t"))),)
 
 
-def test_mpm_check_is_not_part_of_the_base_lowering():
-    with pytest.raises(LoweringError, match="unknown element <mpmCheck>"):
-        lower_string('<icd><message name="m"><mpmCheck name="c" bitCount="16"/></message></icd>')
+def test_timecsecs_is_not_part_of_the_base_lowering():
+    with pytest.raises(LoweringError, match="unknown element <timecsecs>"):
+        lower_string('<icd><message name="m"><timecsecs name="t" bitCount="32"/></message></icd>')
+
+
+def test_fault_code_is_an_unsigned_integer():
+    (field,) = lower_fields('<faultCode name="fault" bitCount="16"/>')
+
+    assert field == Int("fault", 16, signed=False)
+
+
+def test_fault_code_keeps_integer_options():
+    (field,) = lower_fields(
+        '<faultCode name="fault" bitCount="16"><label>Fault</label>'
+        '<namedValues><namedValue name="none" value="0"/></namedValues>'
+        "<default>none</default></faultCode>"
+    )
+
+    assert (field.meta.label, field.enum.values[0].name, field.default) == ("Fault", "none", 0)
+
+
+def test_fault_code_cannot_be_signed():
+    with pytest.raises(LoweringError, match="<faultCode name='fault'> is always unsigned"):
+        lower_fields('<faultCode name="fault" bitCount="16" signed="true"/>')
+
+
+def test_fault_code_can_be_a_field_def():
+    icd = lower_string(
+        '<icd><fieldDefs><faultCode id="f" bitCount="16"/></fieldDefs>'
+        '<message name="m"><faultCode name="fault" ref="f"/></message></icd>',
+        lowering=ExampleLowering,
+    )
+
+    assert icd.messages[0].body.fields == (Int("fault", 16, meta=Meta(origin=("", "f"))),)
+
+
+def test_fault_code_is_not_part_of_the_base_lowering():
+    with pytest.raises(LoweringError, match="unknown element <faultCode>"):
+        lower_string('<icd><message name="m"><faultCode name="f" bitCount="16"/></message></icd>')
 
 
 # --- protocolled commands: a dialect-specific rule --------------------------
@@ -330,7 +558,7 @@ DUPLICATE_UNITS = """
 <message name="a"><group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"/></message>
 <message name="b">
   <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"/>
-  <union discrimField="../systemId">
+  <union discrimField="../systemId" xsi:type="subsystemRef">
     <system name="vehicle" value="1"><subsystem name="computer" value="1">
       <unit name="left" value="1"/><unit name="center" value="1"/>
     </subsystem></system>
@@ -352,8 +580,7 @@ def test_duplicate_unit_values_are_reported_once_at_first_use():
 
 
 def test_example_icd_is_valid():
-    with open("tests/data/example-icd.xml") as f:
-        icds = EXAMPLE.lower([f.read()])
+    icds = EXAMPLE.load(["tests/data/example-icd.xml"])  # and test-icd.xml, by import
 
     assert EXAMPLE.validate(icds) == []
 

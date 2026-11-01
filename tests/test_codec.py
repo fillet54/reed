@@ -471,7 +471,7 @@ SYSTEM_STATUS = """
 </fieldDefs>
 <message name="status">
   <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"/>
-  <union discrimField="../systemId">
+  <union discrimField="../systemId" xsi:type="subsystemRef">
     <system name="fuel" value="10">
       <integer name="total" bitCount="8"/>
       <subsystem name="tanks" value="1"><integer name="leak" bitCount="3"/></subsystem>
@@ -493,6 +493,15 @@ def test_system_id_union_fills_the_system_id():
         "fuel.tanks": {"leak": 5},
     }
     assert int.from_bytes(data, "big") >> (32 - 24) == (10 << 17) | (1 << 10) | (5 << 0)
+
+
+def test_system_id_without_a_case_does_not_decode():
+    icds = EXAMPLE.lower([SYSTEM_STATUS])
+    (msg,) = icds[""].messages
+    data = ((10 << 17) | (2 << 10)).to_bytes(3, "big") + b"\0"  # fuel, subsystem 2
+
+    with pytest.raises(CodecError, match=r"no case for discriminator value \(10, 2, 0\)"):
+        decode(msg, data, icds)
 
 
 # --- message refs -----------------------------------------------------------
@@ -558,24 +567,189 @@ def test_data_must_be_whole_words():
 # --- the example ICD --------------------------------------------------------
 
 
+def example():
+    icds = EXAMPLE.load(["tests/data/example-icd.xml"])  # and test-icd.xml, by import
+    messages = {m.name: m for icd in icds.values() for m in icd.messages}
+    return messages, icds
+
+
+RCS_QUAD_B = {"system": 3, "subsystem": 1, "unit": 2}
+
+
 def test_example_power_command():
-    with open("tests/data/example-icd.xml") as f:
-        icds = EXAMPLE.lower([f.read()])
-    command = icds["http://example.com/schema"].messages[0]
-
+    messages, icds = example()
     value = {
-        "header": {"key": 7},
-        "commandBody": {
-            "power": {"systemId": {"system": 10, "subsystem": 5, "unit": 1}, "mode": "ON"}
-        },
+        "header": {"key": 7, "time": 360000},
+        "CommandBody": {"power": {"systemId": RCS_QUAD_B, "mode": "ON"}},
     }
-    data = encode(command, value, icds)
 
-    # id=1, key=7, systemId=(10,5,1) in 21 bits, mode=1, 10 spare bits
-    assert data.hex() == "00010007" + "14140c00"
-    assert decode(command, data, icds) == {
-        "header": {"id": 1, "key": 7},
-        "commandBody": {
-            "power": {"systemId": {"system": 10, "subsystem": 5, "unit": 1}, "mode": "ON"}
+    data = encode(messages["Command"], value, icds)
+
+    # CommandNumber=1, key=7, time=360000 (01:00:00 UTC), then systemId=(3,1,2)
+    # in 21 bits, mode=1 and 10 spare bits
+    assert data.hex() == "0001" "0007" "00057e40" "06041400"
+    assert decode(messages["Command"], data, icds) == {
+        "header": {"CommandNumber": "power", "key": 7, "time": 360000},
+        "CommandBody": {"power": {"systemId": RCS_QUAD_B, "mode": "ON"}},
+    }
+
+
+def test_example_test_command_carries_a_test_icd_message():
+    messages, icds = example()
+    value = {
+        "header": {"key": 1, "time": 0},
+        "CommandBody": {
+            "TestCommand": {
+                "TestCommandBody": {
+                    "header": {"TestNumber": "memoryCheck"},
+                    "TestCommandBody": {"memoryCheck": {"startAddress": 0o4000, "wordCount": 64}},
+                }
+            }
         },
     }
+
+    data = encode(messages["Command"], value, icds)
+
+    assert data.hex() == "0005" "0001" "00000000" "0003" "0800" "0040"
+    assert decode(messages["Command"], data, icds) == {
+        **value,
+        "header": {"CommandNumber": "TestCommand", "key": 1, "time": 0},
+    }
+
+
+def test_example_stored_command():
+    messages, icds = example()
+    value = {
+        "header": {"key": 2, "time": 0},
+        "CommandBody": {
+            "storeAp": {
+                "executeAt": 100,
+                "stored": {"gimbalTrim": {"pitch": 1.5, "yaw": -0.5}},
+            }
+        },
+    }
+
+    data = encode(messages["Command"], value, icds)
+    stored = decode(messages["Command"], data, icds)["CommandBody"]["storeAp"]
+
+    assert data.hex() == "0004" "0002" "00000000" "0002" "00000064" "3fc00000" "bf000000"
+    assert stored == {
+        "CommandNumber": "gimbalTrim",  # filled in from the stored command
+        "executeAt": 100,
+        "stored": {"gimbalTrim": {"pitch": 1.5, "yaw": -0.5}},
+    }
+
+
+# --- floats -----------------------------------------------------------------
+
+
+def test_float32_is_its_ieee_bits():
+    data = roundtrip('<ieeeFloat name="f" bitCount="32"/>', {"f": 1.5})
+
+    assert data == bytes.fromhex("3fc00000")
+
+
+def test_float64_is_its_ieee_bits():
+    data = roundtrip('<ieeeFloat name="f" bitCount="64"/>', {"f": -0.1})
+
+    assert data == bytes.fromhex("bfb999999999999a")
+
+
+def test_float32_rounds_to_single_precision():
+    msg, icds = message('<ieeeFloat name="f" bitCount="32"/>')
+
+    assert decode(msg, encode(msg, {"f": 0.1}, icds), icds) == {"f": pytest.approx(0.1)}
+
+
+def test_float_accepts_an_int():
+    assert roundtrip('<ieeeFloat name="f" bitCount="32"/>', {"f": 2}) == bytes.fromhex("40000000")
+
+
+def test_float_words_follow_the_byte_order():
+    data = roundtrip('<ieeeFloat name="f" bitCount="32"/>', {"f": 1.5}, byteorder="little")
+
+    assert data == bytes.fromhex("c03f0000")
+
+
+def test_missing_float_uses_its_default():
+    msg, icds = message('<ieeeFloat name="f" bitCount="32"><default>1.5</default></ieeeFloat>')
+
+    assert encode(msg, {}, icds) == bytes.fromhex("3fc00000")
+
+
+@pytest.mark.parametrize("value, error", [("x", "expected a number"), (True, "expected a number")])
+def test_float_must_be_a_number(value, error):
+    msg, icds = message('<ieeeFloat name="f" bitCount="32"/>')
+
+    with pytest.raises(CodecError, match=f"m/f: {error}"):
+        encode(msg, {"f": value}, icds)
+
+
+def test_float_too_big_for_32_bits_is_an_error():
+    msg, icds = message('<ieeeFloat name="f" bitCount="32"/>')
+
+    with pytest.raises(CodecError, match=r"m/f: 1e\+300 does not fit in a 32-bit float"):
+        encode(msg, {"f": 1e300}, icds)
+
+
+# --- hexdata ----------------------------------------------------------------
+
+
+def test_fixed_hexdata_is_its_bytes():
+    data = roundtrip('<hexdata name="raw" bitCount="32"/>', {"raw": b"\xde\xad\xbe\xef"})
+
+    assert data == bytes.fromhex("deadbeef")
+
+
+def test_fixed_hexdata_accepts_a_bytearray():
+    msg, icds = message('<hexdata name="raw" bitCount="16"/>')
+
+    assert encode(msg, {"raw": bytearray(b"\x01\x02")}, icds) == bytes.fromhex("0102")
+
+
+def test_fixed_hexdata_must_be_its_exact_size():
+    msg, icds = message('<hexdata name="raw" bitCount="32"/>')
+
+    with pytest.raises(CodecError, match="m/raw: 2 bytes; the field holds 4"):
+        encode(msg, {"raw": b"\x01\x02"}, icds)
+
+
+@pytest.mark.parametrize("value", ["dead", [1, 2], None])
+def test_hexdata_must_be_bytes(value):
+    msg, icds = message('<hexdata name="raw" bitCount="16"/>')
+
+    with pytest.raises(CodecError, match="m/raw: expected bytes"):
+        encode(msg, {"raw": value}, icds)
+
+
+def test_missing_hexdata_is_an_error():
+    msg, icds = message('<hexdata name="raw" bitCount="16"/>')
+
+    with pytest.raises(CodecError, match="m/raw: missing"):
+        encode(msg, {}, icds)
+
+
+VARIABLE_HEX = (
+    '<integer name="n" bitCount="8"/>'
+    '<hexdata name="raw" bitCount="variable" countVariable="../n"/>'
+)
+
+
+def test_variable_hexdata_fills_in_its_byte_count():
+    msg, icds = message(VARIABLE_HEX)
+
+    data = encode(msg, {"raw": b"\xaa\xbb\xcc"}, icds)
+
+    assert data == bytes.fromhex("03aabbcc")
+    assert decode(msg, data, icds) == {"n": 3, "raw": b"\xaa\xbb\xcc"}
+
+
+def test_variable_hexdata_count_must_agree():
+    msg, icds = message(VARIABLE_HEX)
+
+    with pytest.raises(CodecError, match="m/n: is 2 but 3 bytes needs 3"):
+        encode(msg, {"n": 2, "raw": b"\xaa\xbb\xcc"}, icds)
+
+
+def test_empty_variable_hexdata():
+    assert roundtrip(VARIABLE_HEX, {"n": 0, "raw": b""}) == bytes.fromhex("0000")

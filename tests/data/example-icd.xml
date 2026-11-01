@@ -1,107 +1,231 @@
 <icd>
-  <namespace alias="example">http://example.com/schema</namespace>
-  <fieldDefs>
-    <group id="header">
-      <integer name="id" bitCount="16" />
-      <integer name="key" bitCount="16" />
-    </group>
-    <group id="SubsystemType" xsi:type="subsystemDef" bitCount="21">
-      <system name="vehicle" value="1">
-        <subsystem name="computer" value="1">
-          <unit name="left" value="1"></unit>
-          <unit name="center" value="2"></unit>
-          <unit name="right" value="3"></unit>
-        </subsystem>
-      </system>
-      <system name="fuel" value="10">
-        <subsystem name="tanks" value="1">
-          <unit name="left" value="1"></unit>
-          <unit name="right" value="2"></unit>
-        </subsystem>
+  <!--
+    Apollo Command/Service Module (CSM) uplink commands and downlink returns,
+    in the example dialect. Test commands live in test-icd.xml and are carried
+    by the TestCommand command.
+  -->
+  <namespace alias="example">http://example.com/example-icd</namespace>
+  <refSchemaLocation alias="test">http://example.com/test-icd test-msg.xsd</refSchemaLocation>
 
-        <subsystem name="valves" value="5">
-          <unit name="vent" value="1"></unit>
-          <unit name="fill" value="2"></unit>
+  <fieldDefs>
+    <group id="commandHeader">
+      <integer name="CommandNumber" bitCount="16">
+        <label>Command number</label>
+        <namedValues fromUnion="//Command/CommandBody" restrict="true" />
+      </integer>
+      <commandkey name="key" bitCount="16">
+        <description>Unique key, echoed in the return that answers this command</description>
+      </commandkey>
+      <timecsecs name="time" bitCount="32">
+        <description>When the command was sent</description>
+      </timecsecs>
+    </group>
+
+    <group id="returnHeader">
+      <integer name="ReturnNumber" bitCount="16">
+        <namedValues fromUnion="//Return/ReturnBody" restrict="true" />
+      </integer>
+      <commandkey name="key" bitCount="16" />
+      <timecsecs name="time" bitCount="32" />
+    </group>
+
+    <group id="SubsystemType" xsi:type="subsystemDef" bitCount="21">
+      <system name="GNC" value="1">
+        <subsystem name="IMU" value="1">
+          <unit name="inner" value="1" />
+          <unit name="middle" value="2" />
+          <unit name="outer" value="3" />
+        </subsystem>
+        <subsystem name="CMC" value="2">
+          <unit name="erasable" value="1" />
+          <unit name="fixed" value="2" />
+        </subsystem>
+      </system>
+      <system name="SPS" value="2">
+        <subsystem name="engine" value="1">
+          <unit name="bankA" value="1" />
+          <unit name="bankB" value="2" />
+        </subsystem>
+        <subsystem name="propellant" value="2">
+          <unit name="fuel" value="1" />
+          <unit name="oxidizer" value="2" />
+        </subsystem>
+      </system>
+      <system name="RCS" value="3">
+        <subsystem name="quad" value="1">
+          <unit name="A" value="1" />
+          <unit name="B" value="2" />
+          <unit name="C" value="3" />
+          <unit name="D" value="4" />
+        </subsystem>
+      </system>
+      <system name="EPS" value="4">
+        <subsystem name="fuelCell" value="1">
+          <unit name="fc1" value="1" />
+          <unit name="fc2" value="2" />
+          <unit name="fc3" value="3" />
         </subsystem>
       </system>
     </group>
+
+    <ieeeFloat id="angle" bitCount="32">
+      <label>Angle</label>
+      <description>Degrees</description>
+      <default>0</default>
+    </ieeeFloat>
+
+    <scalar id="volts" bitCount="16" scale="0.01">
+      <description>Volts</description>
+    </scalar>
   </fieldDefs>
-  
-  <message name="command">
-    <group name="header" ref="header"></group>
-    <union name="commandBody" discrimField="../header/id">
+
+  <message name="Command">
+    <group name="header" ref="commandHeader" />
+    <union name="CommandBody" discrimField="../header/CommandNumber">
       <command name="power" discrimValue="1">
-        <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"></group>
+        <label>Power a unit on or off</label>
+        <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef" />
         <integer name="mode" bitCount="1">
           <namedValues restrict="true">
-            <namedValue name="ON" value="1" />
             <namedValue name="OFF" value="0" />
+            <namedValue name="ON" value="1" />
           </namedValues>
+          <default>OFF</default>
         </integer>
         <spare bitCount="10" />
-       </command>
-      <command name="ibit" discrimValue="2">
-        <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"></group>
-       </command>
-      <command name="changeFrequency" discrimValue="21">
-        <scalar name="freq" bitCount="16" scale="1000" offset="2500">
-          <label>Frequency</label>
-          <description>Frequency with scaling</description>
+      </command>
+
+      <command name="gimbalTrim" discrimValue="2">
+        <label>SPS gimbal trim</label>
+        <ieeeFloat name="pitch" ref="angle" />
+        <ieeeFloat name="yaw" ref="angle" />
+      </command>
+
+      <command name="spsBurn" discrimValue="3">
+        <label>Service Propulsion System burn</label>
+        <timecsecs name="ignitionTime" bitCount="32" />
+        <scalar name="deltaV" bitCount="16" scale="0.1">
+          <description>Meters per second</description>
         </scalar>
-       </command>
+        <spare bitCount="16" />
+        <ieeeFloat name="burnDuration" bitCount="64">
+          <description>Seconds</description>
+        </ieeeFloat>
+      </command>
+
+      <command name="storeAp" discrimValue="4">
+        <label>Store a command to run later</label>
+        <integer name="CommandNumber" bitCount="16">
+          <namedValues fromUnion="//Command/CommandBody" />
+        </integer>
+        <timecsecs name="executeAt" bitCount="32" />
+        <apCommand name="stored" />
+      </command>
+
+      <command name="TestCommand" discrimValue="5">
+        <label>Run a test (see test-icd.xml)</label>
+        <group name="TestCommandBody" ref="test:TestCommand" />
+      </command>
+
+      <command name="uplinkData" discrimValue="6" protocolled="false">
+        <label>Raw data for the CMC erasable memory</label>
+        <integer name="numBytes" bitCount="5" />
+        <spare bitCount="3" />
+        <hexdata name="data" bitCount="variable" countVariable="../numBytes" />
+      </command>
+
+      <command name="setCallsign" discrimValue="7">
+        <string name="callsign" bitCount="128" />
+      </command>
+
+      <spare discrimValue="default" bitCount="16" />
     </union>
   </message>
 
-  <message name="return">
-    <group name="header" ref="header"></group>
-    <union name="returnBody" discrimField="../header/id">
+  <message name="Return">
+    <group name="header" ref="returnHeader" />
+    <union name="ReturnBody" discrimField="../header/ReturnNumber">
       <return name="status" discrimValue="1">
-        <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"></group>
-        <union discrimField="../systemId">
-          <system name="vehicle" value="1">
-            <group name="summaryStatus">
-              <integer name="aliveCount" bitCount="16"></integer>
+        <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef" />
+        <spare bitCount="11" />
+        <union name="detail" discrimField="../systemId" xsi:type="subsystemRef">
+          <system name="GNC">
+            <group name="summary">
+              <integer name="alarmCount" bitCount="16" />
             </group>
-            <subsystem name="computer" value="1">
-              <unit name="left" value="1">
-                <group name="info">
-                  <integer name="version" bitCount="16"></integer>
-                </group>
+            <subsystem name="IMU">
+              <unit name="inner">
+                <ieeeFloat name="gimbalAngle" ref="angle" />
               </unit>
-              <unit name="center" value="2">
-                <group name="info">
-                  <integer name="version" bitCount="16"></integer>
-                </group>
+              <unit name="middle">
+                <ieeeFloat name="gimbalAngle" ref="angle" />
               </unit>
-              <unit name="right" value="3">
-                <group name="info">
-                  <integer name="version" bitCount="16"></integer>
-                </group>
+              <unit name="outer">
+                <ieeeFloat name="gimbalAngle" ref="angle" />
               </unit>
             </subsystem>
           </system>
-          <system name="fuel" value="10">
-            <group name="summaryStatus">
-              <integer name="totalFuel" bitCount="16"></integer>
-              <integer name="valveOpenCount" bitCount="16"></integer>
-            </group>
-            <subsystem name="tanks" value="1">
-              <group name="info">
-                <integer name="leakAmount" bitCount="16"></integer>
-              </group>
+          <system name="SPS">
+            <subsystem name="propellant">
+              <scalar name="percentRemaining" bitCount="16" scale="0.01" />
+              <unit name="fuel" />
+              <unit name="oxidizer" />
+            </subsystem>
+          </system>
+          <system name="EPS">
+            <subsystem name="fuelCell">
+              <unit name="fc1">
+                <group2 name="output">
+                  <scalar name="volts" ref="volts" />
+                  <scalar name="amps" bitCount="16" scale="0.01" />
+                </group2>
+              </unit>
+              <unit name="fc2">
+                <group2 name="output">
+                  <scalar name="volts" ref="volts" />
+                  <scalar name="amps" bitCount="16" scale="0.01" />
+                </group2>
+              </unit>
+              <unit name="fc3">
+                <group2 name="output">
+                  <scalar name="volts" ref="volts" />
+                  <scalar name="amps" bitCount="16" scale="0.01" />
+                </group2>
+              </unit>
             </subsystem>
           </system>
         </union>
       </return>
-      <return name="event" discrimValue="2">
-        <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef"></group>
+
+      <return name="fault" discrimValue="2">
+        <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef" />
         <integer name="set" bitCount="1">
           <namedValues>
-            <namedValue name="SET" value="1" />
             <namedValue name="CLEAR" value="0" />
+            <namedValue name="SET" value="1" />
           </namedValues>
         </integer>
-        <integer name="code" bitCount="15"></integer>
+        <spare bitCount="10" />
+        <faultCode name="code" bitCount="16">
+          <namedValues>
+            <namedValue name="none" value="0" />
+            <namedValue name="masterAlarm" value="1" />
+            <namedValue name="programAlarm" value="1201" />
+            <namedValue name="executiveOverflow" value="1202" />
+          </namedValues>
+        </faultCode>
+      </return>
+
+      <return name="batteryVoltages" discrimValue="3">
+        <integer name="count" bitCount="4" />
+        <spare bitCount="12" />
+        <group name="batteries" countValue="../count">
+          <scalar name="volts" ref="volts" />
+        </group>
+      </return>
+
+      <return name="crewMessage" discrimValue="4">
+        <string name="text" bitCount="variable" />
       </return>
     </union>
   </message>

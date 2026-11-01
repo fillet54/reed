@@ -304,3 +304,45 @@ def test_scalar_default_that_does_not_fit_is_an_error():
 
 def test_default_that_fits_is_fine():
     assert issues('<integer name="a" bitCount="4" signed="true"><default>-8</default></integer>') == []
+
+
+# --- floats -----------------------------------------------------------------
+
+
+def test_float_default_too_big_for_32_bits_is_an_error():
+    assert issues('<ieeeFloat name="f" bitCount="32"><default>1e300</default></ieeeFloat>') == [
+        ("error", "default-out-of-range", "m/f")
+    ]
+
+
+def test_float_default_that_fits_is_fine():
+    assert issues('<ieeeFloat name="f" bitCount="64"><default>1e300</default></ieeeFloat>') == []
+
+
+def test_float_ref_tag_mismatch_is_a_warning():
+    assert issues(
+        '<ieeeFloat name="f" ref="s"/>', defs='<scalar id="s" bitCount="32"/>'
+    ) == [("warning", "ref-tag-mismatch", "m/f")]
+
+
+# --- hexdata ----------------------------------------------------------------
+
+
+def test_hexdata_count_variable_must_resolve():
+    assert issues('<hexdata name="raw" bitCount="variable" countVariable="../nope"/>') == [
+        ("error", "unresolved-path", "m/raw")
+    ]
+
+
+def test_hexdata_count_variable_must_be_an_integer():
+    assert issues(
+        '<group name="g"><spare bitCount="8"/></group>'
+        '<hexdata name="raw" bitCount="variable" countVariable="../g"/>'
+    ) == [("error", "count-not-integer", "m/raw")]
+
+
+def test_hexdata_count_variable_must_come_first():
+    assert issues(
+        '<hexdata name="raw" bitCount="variable" countVariable="../n"/>'
+        '<integer name="n" bitCount="8"/>'
+    ) == [("error", "used-before-defined", "m/raw")]

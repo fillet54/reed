@@ -260,3 +260,23 @@ def test_str_of_linear_size():
 
 def test_str_of_range():
     assert str(message_size(UNION)) == "16–32 bits"
+
+
+def test_float_size_is_its_bit_count():
+    size = message_size('<ieeeFloat name="a" bitCount="32"/><ieeeFloat name="b" bitCount="64"/>')
+
+    assert size == Size.fixed(96)
+
+
+def test_fixed_hexdata_size_is_its_bit_count():
+    assert message_size('<hexdata name="raw" bitCount="48"/>') == Size.fixed(48)
+
+
+def test_variable_hexdata_size_is_eight_bits_per_count():
+    size = message_size(
+        '<integer name="n" bitCount="4"/>'
+        '<hexdata name="raw" bitCount="variable" countVariable="../n"/>'
+    )
+
+    assert (size.lo, size.hi) == (4, 4 + 15 * 8)
+    assert size.linear == Linear(4, (("n", 8),))

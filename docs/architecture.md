@@ -40,6 +40,25 @@ XML ──parse──▶ DOM ──lower──▶ IR ──link/validate──�
 - The alias exists for convenience and documentation. Refs may use it (`ref="example:header"` resolves locally). An earlier binary ⇄ XML tool for this format used it as the element prefix in instance documents (`<example:command>`) instead of an `xmlns` declaration, so a future instance converter should do the same.
 - **Imports:** `<refSchemaLocation alias="support">https://example.com/support-icd support-msg.xsd</refSchemaLocation>` makes `support:` mean the loaded ICD whose `<namespace>` is that uri (the `.xsd` part is ignored). Without an import line, a prefix matches a loaded ICD's own alias. `load_files` / `Dialect.load` / `reed check` find an imported file next to the importer, named after the uri's last segment (`support-icd.xml`), follow imports transitively and load each file once. If the file isn't found, a ref through the alias fails with a hint naming the expected file. All ICDs share one `Catalog`, which also catches fieldDef cycles across files.
 
+### Example ICDs
+- `tests/data/example-icd.xml` is a small Apollo CSM ICD in the example dialect: `Command` (power, SPS gimbal trim and burn, a stored command via `<apCommand>`, raw uplink data, callsign, a default no-op) and `Return` (status by system ID, faults, battery voltages, crew messages). It uses every feature the dialect has.
+- It imports `tests/data/test-icd.xml` (alias `test`), whose `TestCommand` message has its own header and union of test commands. The `TestCommand` command carries it: `<group name="TestCommandBody" ref="test:TestCommand"/>`. The test ICD refs the main ICD's `example:SubsystemType` back.
+- `reed check --dialect example tests/data/example-icd.xml` loads both and should report no issues.
+
+### System-ID unions (example dialect)
+- `<union discrimField="../systemId" xsi:type="subsystemRef">` holds a `<system>`/`<subsystem>`/`<unit>` tree. It stands for three nested unions (on system, subsystem and unit), kept flat: one case per level that has fields of its own, named `fuel.tanks` and valued by the whole ID `(10, 1, 0)`. A level's fields are the 0 ("any/all") value of the levels below it. A unit is always a case. A level without fields is no case, so `(1, 1, 0)` for a subsystem that only has units doesn't decode.
+- A `<system>` in a union without that xsi:type is an error, and so is any other child in a subsystemRef union.
+- Levels are named only: their values come from the subsystemDef. The dialect assumes there is exactly one: on first use it gathers every loaded ICD's subsystemDefs by `alias:id` into `Catalog.context` (shared lowering state for dialects), and lowering fails if it finds none or several. A name the subsystemDef doesn't have is a lowering error, also on a level that is no case. A `value` may still be given; it must agree with the subsystemDef's.
+- The `subsystem-ref-discrim` rule checks that the union's `discrimField` is a subsystemIDRef of that same subsystemDef.
+
+### Floats
+- `<ieeeFloat bitCount="32|64">` is an IEEE 754 single or double (`Float`). Any other bitCount is a lowering error, also when a ref overrides it.
+- Codec values are numbers. The float's bits go in stream order like an integer's, so its sign bit comes first and each word follows `layout.byteorder`. A value too big for a 32-bit float is a codec error. A `<default>` that is too big is a `default-out-of-range` error.
+
+### Raw data
+- `<hexdata bitCount="64">` is fixed raw data (`Bytes`): bitCount/8 bytes, and bitCount must be whole bytes. `<hexdata bitCount="variable" countVariable="../numBytes">` takes its byte count from an earlier integer field, a path relative to the field like an array's `countValue`. Validation checks that the path resolves, comes first and is an integer.
+- Codec values are `bytes` (a `bytearray` is accepted), in stream order. A fixed field needs exactly its size. A variable one fills its count field from the length, and a conflicting count is an error.
+
 ### Strings
 - `<string bitCount="64">` is fixed: bitCount/8 one-byte characters, zero-filled when shorter, no terminator when full. bitCount must be whole words (`string-bits`).
 - `<string bitCount="variable">` is an 8-bit length then that many characters (0–255), with no terminator and no alignment: 8–2048 bits.
@@ -48,6 +67,7 @@ XML ──parse──▶ DOM ──lower──▶ IR ──link/validate──�
 ### Default cases
 - `discrimValue="default"` marks the case used when the discriminator matches no other one (`Case.value is DEFAULT`). Usually it's written `<spare discrimValue="default" bitCount="30"/>`, a case with no fields that is named `default`. Any case can be the default, though. A `<spare>` case with a number is a fieldless case named `spare<N>`.
 - Decoding falls back to the default case. Encoding can't pick the discriminator for it: the value comes from the caller or the field's `<default>`, and it mustn't be another case's value. Expansion gives it a variant (`command/default`) whose discriminator stays open (no const). Two default cases in one union are a `duplicate-case-value`.
+- A `<spare>` without `discrimValue` is taken as the default case when it is the union's only `<spare>`, with a `spare-without-discrim-value` warning. Next to other spares it is an error, as before.
 
 ### Named values and defaults
 - `<namedValues restrict="true">` with `<namedValue name value>` children gives an integer its names; `restrict` means only those values are legal, which codecs check.

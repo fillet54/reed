@@ -18,7 +18,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from .ir import STRING_LENGTH_BITS, VARIABLE, Array, Icd, Int, LayoutPolicy, Message, MessageRef, MsgKey, Scaled, Spare, String, Struct, Union
+from .ir import STRING_LENGTH_BITS, VARIABLE, Array, Bytes, Float, Icd, Int, LayoutPolicy, Message, MessageRef, MsgKey, Scaled, Spare, String, Struct, Union
 from .paths import Stack, children, field_path, push, resolve, root_stack
 
 
@@ -122,13 +122,18 @@ class Sizer:
     def size(self, stack: Stack) -> Size:
         node = stack[-1].node
 
-        if isinstance(node, (Int, Scaled, Spare)):
+        if isinstance(node, (Int, Scaled, Float, Spare)):
             return Size.fixed(node.bits)
 
         if isinstance(node, String):
             if node.bits is VARIABLE:
                 return Size(STRING_LENGTH_BITS, STRING_LENGTH_BITS + 255 * 8)
             return Size.fixed(node.bits)
+
+        if isinstance(node, Bytes):
+            if node.bits is not VARIABLE:
+                return Size.fixed(node.bits)
+            return self.counted(node.count, stack, Size.fixed(8))
 
         if isinstance(node, Struct):
             total = Size.fixed(0)
@@ -153,9 +158,11 @@ class Sizer:
 
     def array(self, node: Array, stack: Stack) -> Size:
         (element_frame,) = children(stack[-1])
-        element = self.size(push(stack, element_frame))
+        return self.counted(node.count, stack, self.size(push(stack, element_frame)))
 
-        count_frame = resolve(node.count, stack)
+    def counted(self, count: str, stack: Stack, element: Size) -> Size:
+        """`count` (a path from the node on top of `stack`) times `element`."""
+        count_frame = resolve(count, stack)
         bounds = count_range(count_frame.node) if count_frame else None
         if bounds is None:
             return UNBOUNDED

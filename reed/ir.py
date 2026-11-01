@@ -107,6 +107,34 @@ class Scaled:
 
 
 @dataclass(frozen=True, slots=True)
+class Bytes:
+    """Raw data (<hexdata>), in stream order.
+
+    Fixed (`bits` a number): bits/8 bytes. Variable (`bits` is VARIABLE): as
+    many bytes as the integer at `count` says, a path relative to this field
+    like an array's countValue ("../n" is a sibling).
+    """
+
+    name: str
+    bits: int | object  # int, or VARIABLE
+    count: Path = ""
+    meta: Meta = field(default_factory=Meta)
+
+
+@dataclass(frozen=True, slots=True)
+class Float:
+    """An IEEE 754 binary float: 32 (single) or 64 (double) bits."""
+
+    name: str
+    bits: int
+    meta: Meta = field(default_factory=Meta)
+    default: float | None = None  # used when a codec isn't given a value
+
+
+FLOAT_BITS = (32, 64)
+
+
+@dataclass(frozen=True, slots=True)
 class String:
     """Text, one byte per character.
 
@@ -183,7 +211,7 @@ class MessageRef:
     target: MsgKey
 
 
-Node = TypingUnion[Int, Scaled, String, Spare, Struct, Union, Array, MessageRef]
+Node = TypingUnion[Int, Scaled, Float, String, Bytes, Spare, Struct, Union, Array, MessageRef]
 
 
 @dataclass(frozen=True, slots=True)

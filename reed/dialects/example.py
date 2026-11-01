@@ -7,9 +7,11 @@ children list the legal values. Fields use it with
 Unions keyed by a system ID have cases that follow that same hierarchy.
 
 Also: <group2> is another spelling of <group>, <commandkey> (the unique key
-field) and <mpmCheck> (a checksum field) are <integer>s, <apCommand> is a
-union with the cases of //Command/CommandBody keyed by ../CommandNumber,
-and a command with protocolled="false" limits its whole message to 50 bytes.
+field) and <timecsecs> (centiseconds since midnight UTC) are <integer>s,
+<faultCode> is an unsigned <integer>,
+<apCommand> is a union with the cases of //Command/CommandBody keyed by
+../CommandNumber, and a command with protocolled="false" limits its whole
+message to 50 bytes.
 
 Words are 16 bits: every message is a whole number of words, the rest of the
 last one an implicit spare.
@@ -21,8 +23,8 @@ from dataclasses import replace
 from xml.etree import ElementTree as ET
 
 from ..dialect import Dialect
-from ..ir import Case, Domain, Int, LayoutPolicy, Struct
-from ..lower import META_TAGS, XSI_TYPE, Lowering, LoweringError, _int, _tag
+from ..ir import Case, Domain, Int, LayoutPolicy, Struct, Union
+from ..lower import META_TAGS, XSI_TYPE, Lowering, LoweringError, _describe, _Element, _int, _tag
 from ..validate import BASE_RULES, rule
 
 LEVELS = ("system", "subsystem", "unit")
@@ -34,8 +36,14 @@ class ExampleLowering(Lowering):
     lower_group2 = Lowering.lower_group
     # <commandkey> (used for the unique key field) is an <integer>.
     lower_commandkey = Lowering.lower_integer
-    # <mpmCheck> (a checksum field) is an <integer>.
-    lower_mpmCheck = Lowering.lower_integer
+    # <timecsecs> (centiseconds since midnight UTC) is an <integer>.
+    lower_timecsecs = Lowering.lower_integer
+
+    def lower_faultCode(self, elem: ET.Element) -> Int:
+        """<faultCode>: an <integer> that is always unsigned."""
+        if self.flag(elem, "signed"):
+            raise LoweringError(f"{_describe(elem)} is always unsigned")
+        return self.lower_integer(elem)
 
     # <apCommand> stands for a union of the top-level commands: the cases of
     # this union, picked by the CommandNumber beside it unless it gives a
@@ -84,27 +92,130 @@ class ExampleLowering(Lowering):
         props = case.meta.props + (("protocolled", self.flag(elem, "protocolled")),)
         return replace(case, meta=replace(case.meta, props=props))
 
+    def lower_type_subsystemRef(self, elem: ET.Element) -> Union:
+        """A union keyed by a system ID, its cases a system/subsystem/unit tree.
+
+        It stands for three nested unions (on system, subsystem, unit), kept
+        flat: one case per level that has fields of its own, valued by the
+        whole ID. A level's fields are the 0 ("any/all") value of the levels
+        below it: <system name="vehicle"><group .../></system> is (1, 0, 0). A
+        unit is always a case.
+
+        Levels are named; their values come from the subsystemDef (a dialect
+        assumption: there is one, see subsystem_def). A value given here must
+        agree with it. The subsystem_ref_discrim rule checks that the
+        discrimField is a subsystemIDRef of that same def.
+        """
+        if elem.get("ref"):
+            return self.ref(elem)  # the union fieldDef carries the tree
+        if _tag(elem) != "union":
+            raise LoweringError(
+                f'xsi:type="subsystemRef" only applies to <union>, not {_describe(elem)}'
+            )
+        key, label, definition = self.subsystem_def()
+
+        shell = _Element(elem.tag, elem.attrib)  # the union without its cases
+        shell.extend(c for c in elem if _tag(c) in META_TAGS)
+        shell.line = getattr(elem, "line", None)
+        union = self.lower_union(shell)
+
+        cases = []
+        for child in elem:
+            if _tag(child) in META_TAGS:
+                continue
+            if _tag(child) != "system":
+                raise LoweringError(
+                    f"a subsystemRef union holds <system>s, not <{_tag(child)}>",
+                    line=getattr(child, "line", None),
+                )
+            cases.extend(self.system_cases(child, (), (), definition.domain, label))
+        meta = replace(union.meta, props=union.meta.props + ((SUBSYSTEM_DEF, (key, label)),))
+        return replace(union, cases=tuple(cases), meta=meta)
+
+    def subsystem_def(self) -> tuple[tuple[str, str], str, Struct]:
+        """The subsystemDef: (namespace, id), its name for messages, and the
+        lowered def. Every loaded ICD's subsystemDefs are gathered once, by
+        alias:id, into the catalog's context; there must be exactly one."""
+        defs = self.catalog.context.get("subsystemDefs")
+        if defs is None:
+            defs = {}
+            for module in self.catalog.modules.values():
+                for key, d in module.def_elems.items():
+                    if d.get(XSI_TYPE) == "subsystemDef":
+                        label = f"{module.alias}:{key}" if module.alias else key
+                        defs[(module.namespace, key)] = (label, module)
+            self.catalog.context["subsystemDefs"] = defs
+
+        if len(defs) != 1:
+            labels = ", ".join(label for label, _ in defs.values()) or "none"
+            raise LoweringError(
+                "a subsystemRef union takes its values from the subsystemDef, "
+                f"but {len(defs)} are loaded: {labels}"
+            )
+        ((key, (label, module)),) = defs.items()
+        return key, label, module.field_def(key[1])
+
     def cases(self, elem: ET.Element):
         if _tag(elem) == "system":
-            yield from self.system_cases(elem, (), ())
-        else:
-            yield from super().cases(elem)
+            raise LoweringError(
+                '<system> in a union needs xsi:type="subsystemRef" on the union',
+                line=getattr(elem, "line", None),
+            )
+        yield from super().cases(elem)
 
-    def system_cases(self, elem: ET.Element, names: tuple, values: tuple):
-        """One case per level. Lower levels' value is 0 ("the whole system")."""
-        name = self.required(elem, "name")
-        names = names + (name,)
-        values = values + (_int(self.required(elem, "value")),)
+    def system_cases(self, elem: ET.Element, names: tuple, values: tuple, domain, label: str):
+        """A case for this level if it has fields (always for a unit), then the
+        levels below. Values come from `domain`, this level's choices in the
+        subsystemDef; lower levels' value is 0 ("any/all")."""
+        level, name = _tag(elem), self.required(elem, "name")
+        found = next((d for d in domain if d.name == name), None)
+        under = f" under {'.'.join(names)}" if names else ""
+        line = getattr(elem, "line", None)
+        if found is None:
+            raise LoweringError(f"no {level} {name!r}{under} in subsystemDef {label!r}", line=line)
+        given = elem.get("value")
+        if given is not None and _int(given) != found.value:
+            raise LoweringError(
+                f"{level} {name!r} has value {_int(given)}, but {found.value} in "
+                f"subsystemDef {label!r}",
+                line=line,
+            )
+        names, values = names + (name,), values + (found.value,)
 
         fields = tuple(
             self.field(c) for c in elem if _tag(c) not in META_TAGS and _tag(c) not in LEVELS
         )
-        padded = values + (0,) * (len(LEVELS) - len(values))
-        yield Case(".".join(names), _tag(elem), padded, Struct(name, fields, meta=self.meta(elem)))
+        if fields or level == LEVELS[-1]:
+            padded = values + (0,) * (len(LEVELS) - len(values))
+            body = Struct(name, fields, meta=self.meta(elem))
+            yield Case(".".join(names), level, padded, body)
 
         for child in elem:
             if _tag(child) in LEVELS:
-                yield from self.system_cases(child, names, values)
+                yield from self.system_cases(child, names, values, found.children, label)
+
+
+# Union meta prop of a subsystemRef union: ((namespace, id), label) of its subsystemDef.
+SUBSYSTEM_DEF = "subsystem-def"
+
+
+@rule(Union)
+def subsystem_ref_discrim(union, ctx):
+    """A subsystemRef union's discrimField must be a subsystemIDRef of the
+    subsystemDef its values came from."""
+    source = union.meta.prop(SUBSYSTEM_DEF)
+    if source is None or not union.discrim:
+        return
+    key, label = source
+    target = ctx.resolve(union.discrim)
+    if target is None:
+        return  # the discriminator rule reports it
+    if not isinstance(target.node, Struct) or target.node.meta.origin != key:
+        yield ctx.error(
+            "subsystem-ref-discrim",
+            f"discrimField {union.discrim!r} is not a subsystemIDRef of {label!r}, "
+            "where this union's values come from",
+        )
 
 
 UNPROTOCOLLED_MAX_BITS = 50 * 8
@@ -129,11 +240,12 @@ def unprotocolled_command_size(case, ctx):
 EXAMPLE = Dialect(
     "example",
     ExampleLowering,
-    BASE_RULES + (unprotocolled_command_size,),
+    BASE_RULES + (unprotocolled_command_size, subsystem_ref_discrim),
     layout=LayoutPolicy(word_bits=16, byteorder="big", pad=True),
     expand=(
-        "command/header/id",  # command bodies
-        "return/header/id",  # return bodies
-        "return/returnBody/*/systemId",  # system IDs
+        "Command/header/CommandNumber",  # command bodies
+        "Return/header/ReturnNumber",  # return bodies
+        "Return/ReturnBody/*/systemId",  # system IDs
+        "TestCommand/header/TestNumber",  # test commands (test-icd.xml)
     ),
 )

@@ -1,0 +1,36 @@
+<icd>
+  <!--
+    CSM test commands. Each arrives inside the example ICD's TestCommand
+    command, as a TestCommand message of its own.
+  -->
+  <namespace alias="test">http://example.com/test-icd</namespace>
+
+  <fieldDefs>
+    <group id="testHeader">
+      <integer name="TestNumber" bitCount="16">
+        <namedValues fromUnion="TestCommandBody" restrict="true" />
+      </integer>
+    </group>
+  </fieldDefs>
+
+  <message name="TestCommand">
+    <group name="header" ref="testHeader" />
+    <union name="TestCommandBody" discrimField="../header/TestNumber">
+      <command name="lampTest" discrimValue="1">
+        <label>Light every caution and warning lamp</label>
+        <integer name="durationSecs" bitCount="16" />
+      </command>
+
+      <command name="imuSelfTest" discrimValue="2">
+        <group name="systemId" ref="example:SubsystemType" xsi:type="subsystemIDRef" />
+        <spare bitCount="11" />
+      </command>
+
+      <command name="memoryCheck" discrimValue="3">
+        <label>Checksum a block of CMC memory</label>
+        <integer name="startAddress" bitCount="16" />
+        <integer name="wordCount" bitCount="16" />
+      </command>
+    </union>
+  </message>
+</icd>

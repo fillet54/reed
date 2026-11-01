@@ -36,9 +36,12 @@ from xml.parsers import expat
 from .ir import (
     DEFAULT,
     VARIABLE,
+    Bytes,
     Array,
     Case,
     Enum,
+    FLOAT_BITS,
+    Float,
     Icd,
     Int,
     LayoutPolicy,
@@ -359,6 +362,7 @@ class Catalog:
         self.modules: dict[str, Lowering] = {}
         self.needs_fill = False  # fromUnion or a cases_from placeholder: see _Fill
         self.in_progress: list[tuple[str, str]] = []  # fieldDefs being lowered
+        self.context: dict = {}  # for dialects: what they gather across the loaded ICDs
 
 
 def _tag(elem: ET.Element) -> str:
@@ -509,6 +513,32 @@ class Lowering:
             default=self.default(elem, None, scaled=True),
         )
 
+    def lower_ieeeFloat(self, elem):
+        bits = self.bits(elem)
+        if bits is None:
+            self.required(elem, "bitCount")  # raises
+        if bits not in FLOAT_BITS:
+            raise LoweringError(
+                f"{_describe(elem)}: bitCount must be 32 or 64, got {elem.get('bitCount')!r}"
+            )
+        default = self.default(elem, None, scaled=True)
+        return Float(self.field_name(elem), bits, meta=self.meta(elem), default=default)
+
+    def lower_hexdata(self, elem):
+        name = self.field_name(elem)
+        bits = self.bits(elem)
+        if bits is None:
+            self.required(elem, "bitCount")  # raises
+        if bits is VARIABLE:
+            return Bytes(name, VARIABLE, self.required(elem, "countVariable"), meta=self.meta(elem))
+        if elem.get("countVariable") is not None:
+            raise LoweringError(
+                f"{_describe(elem)}: countVariable only applies when bitCount is variable"
+            )
+        if bits % 8:
+            raise LoweringError(f"{_describe(elem)}: bitCount {bits} is not a whole number of bytes")
+        return Bytes(name, bits, meta=self.meta(elem))
+
     def lower_string(self, elem):
         bits = self.bits(elem)
         if bits is None:
@@ -534,10 +564,22 @@ class Lowering:
             if not self.catalog.in_progress:  # only fieldDefs may leave it to the use
                 self.required(elem, "discrimField")  # raises
             discrim = ""
+        children = [c for c in elem if _tag(c) not in META_TAGS]
+        spares = [c for c in children if _tag(c) == "spare"]
+        if len(spares) == 1 and spares[0].get("discrimValue") is None:
+            # Likely meant as the default case: say so, and carry on.
+            self.warn(
+                "spare-without-discrim-value",
+                spares[0],
+                f"<spare> in union {elem.get('name', '')!r} has no discrimValue; "
+                'treated as discrimValue="default"',
+            )
+            default = _merged(spares[0], (("discrimValue", "default"),))
+            children = [default if c is spares[0] else c for c in children]
         return Union(
             elem.get("name", ""),
             discrim,
-            tuple(case for c in elem if _tag(c) not in META_TAGS for case in self.cases(c)),
+            tuple(case for c in children for case in self.cases(c)),
             meta=self.meta(elem),
         )
 
@@ -633,12 +675,12 @@ class Lowering:
                 )
             node = replace(node, enum=self.enum(elem))
         if elem.find("default") is not None:
-            if not isinstance(node, (Int, Scaled)):
+            if not isinstance(node, (Int, Scaled, Float)):
                 raise LoweringError(
-                    f"{_describe(elem)}: <default> only applies to integers and scalars"
+                    f"{_describe(elem)}: <default> only applies to integers, scalars and floats"
                 )
             enum = node.enum if isinstance(node, Int) else None
-            node = replace(node, default=self.default(elem, enum, scaled=isinstance(node, Scaled)))
+            node = replace(node, default=self.default(elem, enum, scaled=not isinstance(node, Int)))
 
         label, description = (elem.findtext(tag) for tag in ("label", "description"))
         if (label is not None or description is not None) and hasattr(node, "meta"):

@@ -4,6 +4,9 @@ Values mirror the message:
 - a group is a dict of its fields (spares are left out);
 - an integer is an int, or a name from its named values;
 - a scalar is a number: engineering value = raw × scale + offset;
+- a float is a number, stored as its IEEE 754 bits;
+- hexdata is `bytes` (a bytearray is fine too), exactly its size; a variable
+  one's count field is filled in from its length;
 - a string is a str, one Latin-1 byte per character;
 - a union is `{case_name: case_value}`; an unnamed union's case name appears
   directly in the enclosing dict;
@@ -26,9 +29,10 @@ The layout is the one of the ICD holding the message (set by the dialect).
 
 from __future__ import annotations
 
+import struct
 from collections.abc import Mapping
 
-from .ir import DEFAULT, STRING_LENGTH_BITS, VARIABLE, Array, Icd, Int, String, LayoutPolicy, Message, MessageRef, Scaled, Spare, Struct, Union
+from .ir import DEFAULT, STRING_LENGTH_BITS, VARIABLE, Array, Bytes, Float, Icd, Int, String, LayoutPolicy, Message, MessageRef, Scaled, Spare, Struct, Union
 from .paths import Frame, Stack, children, field_path, push, resolve
 from .size import find_message, layout_of
 
@@ -93,6 +97,10 @@ class _Encoder:
             self.leaves.append((frame, value))
         elif isinstance(node, String):
             self.leaves.append((frame, _string(node, value, frame)))
+        elif isinstance(node, Float):
+            self.leaves.append((frame, _float(node, value, frame)))
+        elif isinstance(node, Bytes):
+            self.hexdata(stack, value)
         elif isinstance(node, Struct):
             self.struct(stack, value)
         elif isinstance(node, Union):
@@ -169,6 +177,25 @@ class _Encoder:
 
         for i, item in enumerate(value):
             self.collect(push(stack, _item(frame, i)), item)
+
+    def hexdata(self, stack: Stack, value) -> None:
+        frame = stack[-1]
+        node: Bytes = frame.node
+        if value is MISSING:
+            raise CodecError(f"{_path(frame)}: missing")
+        if not isinstance(value, (bytes, bytearray)):
+            raise CodecError(f"{_path(frame)}: expected bytes, got {value!r}")
+
+        if node.bits is VARIABLE:
+            target = resolve(node.count, stack)
+            if target is None:
+                raise CodecError(f"{_path(frame)}: countVariable {node.count!r} does not resolve")
+            self.derive(target, len(value), f"{len(value)} bytes")
+        elif len(value) * 8 != node.bits:
+            raise CodecError(
+                f"{_path(frame)}: {len(value)} bytes; the field holds {node.bits // 8}"
+            )
+        self.leaves.append((frame, _Packed(len(value) * 8, int.from_bytes(value, "big"))))
 
     def message_ref(self, stack: Stack, value) -> None:
         frame = stack[-1]
@@ -278,6 +305,23 @@ def _string(node: String, value, frame: Frame) -> _Packed:
     return _Packed(len(data) * 8, int.from_bytes(data, "big"))
 
 
+_FLOAT_FORMAT = {32: ">f", 64: ">d"}
+
+
+def _float(node: Float, value, frame: Frame) -> _Packed:
+    if value is MISSING:
+        value = node.default
+    if value is None or value is MISSING:
+        raise CodecError(f"{_path(frame)}: missing")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise CodecError(f"{_path(frame)}: expected a number, got {value!r}")
+    try:
+        data = struct.pack(_FLOAT_FORMAT[node.bits], value)
+    except OverflowError:
+        raise CodecError(f"{_path(frame)}: {value} does not fit in a {node.bits}-bit float")
+    return _Packed(node.bits, int.from_bytes(data, "big"))
+
+
 def _to_raw(node, value, frame: Frame, restrict: bool = True) -> int:
     """The unsigned raw bits for a leaf value."""
     if isinstance(node, Scaled):
@@ -350,6 +394,15 @@ class _Decoder:
             return self.leaf(frame)
         if isinstance(node, String):
             return self.string(frame)
+        if isinstance(node, Bytes):
+            if node.bits is VARIABLE:
+                size = self.number_at(resolve(node.count, stack), frame, "countVariable")
+            else:
+                size = node.bits // 8
+            return self.reader.read(size * 8, frame).to_bytes(size, "big")
+        if isinstance(node, Float):
+            data = self.reader.read(node.bits, frame).to_bytes(node.bits // 8, "big")
+            return struct.unpack(_FLOAT_FORMAT[node.bits], data)[0]
         if isinstance(node, Struct):
             return self.struct(stack)
         if isinstance(node, Union):

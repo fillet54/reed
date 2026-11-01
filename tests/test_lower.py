@@ -7,9 +7,11 @@ import pytest
 from reed.ir import (
     DEFAULT,
     VARIABLE,
+    Bytes,
     Array,
     Case,
     Enum,
+    Float,
     Int,
     Message,
     MessageRef,
@@ -1098,3 +1100,115 @@ def test_bad_absolute_from_union_is_a_warning(path, message):
     (issue,) = icd.issues
     assert (issue.code, issue.path) == ("from-union-not-found", "log/n")
     assert issue.message == f"namedValues fromUnion {path!r}: {message}"
+
+
+# --- <ieeeFloat> --------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bits", [32, 64])
+def test_ieee_float_is_32_or_64_bits(bits):
+    field = lower_field(f'<ieeeFloat name="temp" bitCount="{bits}"><label>Temp</label></ieeeFloat>')
+
+    assert field == Float("temp", bits, meta=Meta(label="Temp"))
+
+
+@pytest.mark.parametrize("bits", ["16", "48", "variable"])
+def test_ieee_float_of_another_size_is_an_error(bits):
+    with pytest.raises(LoweringError, match=r"<ieeeFloat name='temp'>: bitCount must be 32 or 64"):
+        lower_field(f'<ieeeFloat name="temp" bitCount="{bits}"/>')
+
+
+def test_ieee_float_needs_a_bit_count():
+    with pytest.raises(LoweringError, match="missing required attribute 'bitCount'"):
+        lower_field('<ieeeFloat name="temp"/>')
+
+
+def test_ieee_float_default():
+    assert lower_field('<ieeeFloat name="t" bitCount="32"><default>1.5</default></ieeeFloat>').default == 1.5
+
+
+def test_ieee_float_ref_can_override_the_default():
+    field = lower_field(
+        '<ieeeFloat name="t" ref="f"><default>-2</default></ieeeFloat>',
+        defs='<ieeeFloat id="f" bitCount="64"><default>1</default></ieeeFloat>',
+    )
+
+    assert (field.bits, field.default) == (64, -2.0)
+
+
+def test_ieee_float_ref_cannot_override_its_size_to_another_one():
+    with pytest.raises(LoweringError, match="bitCount must be 32 or 64"):
+        lower_field(
+            '<ieeeFloat name="t" ref="f" bitCount="16"/>', defs='<ieeeFloat id="f" bitCount="32"/>'
+        )
+
+
+# --- <hexdata> ----------------------------------------------------------------
+
+
+def test_hexdata_with_a_bit_count_is_fixed_bytes():
+    field = lower_field('<hexdata name="raw" bitCount="64"><label>Raw</label></hexdata>')
+
+    assert field == Bytes("raw", 64, meta=Meta(label="Raw"))
+
+
+def test_variable_hexdata_counts_bytes_with_count_variable():
+    _, field = lower_fields(
+        '<integer name="n" bitCount="8"/>'
+        '<hexdata name="raw" bitCount="variable" countVariable="../n"/>'
+    )
+
+    assert field == Bytes("raw", VARIABLE, count="../n")
+
+
+@pytest.mark.parametrize(
+    "xml, error",
+    [
+        ('<hexdata name="raw" bitCount="12"/>', "bitCount 12 is not a whole number of bytes"),
+        ('<hexdata name="raw"/>', "missing required attribute 'bitCount'"),
+        (
+            '<hexdata name="raw" bitCount="variable"/>',
+            "missing required attribute 'countVariable'",
+        ),
+        (
+            '<hexdata name="raw" bitCount="16" countVariable="../n"/>',
+            "countVariable only applies when bitCount is variable",
+        ),
+    ],
+)
+def test_bad_hexdata_is_an_error(xml, error):
+    with pytest.raises(LoweringError, match=error):
+        lower_field(xml)
+
+
+def test_hexdata_can_be_a_field_def():
+    field = lower_field('<hexdata name="raw" ref="blob"/>', defs='<hexdata id="blob" bitCount="32"/>')
+
+    assert (field.name, field.bits) == ("raw", 32)
+
+
+# --- a spare case without discrimValue ---------------------------------------
+
+
+def spare_union(cases: str):
+    return lower_string(
+        '<icd><message name="m"><integer name="id" bitCount="8"/>'
+        f'<union name="body" discrimField="../id">{cases}</union></message></icd>'
+    )
+
+
+def test_lone_spare_without_discrim_value_is_the_default_case_with_a_warning():
+    icd = spare_union('<command name="a" discrimValue="1"/><spare bitCount="8"/>')
+
+    union = icd.messages[0].body.fields[1]
+    assert [(c.name, c.value) for c in union.cases] == [("a", 1), ("default", DEFAULT)]
+    (issue,) = icd.issues
+    assert (issue.severity, issue.code, issue.path) == ("warning", "spare-without-discrim-value", "line 1")
+    assert issue.message == (
+        '<spare> in union \'body\' has no discrimValue; treated as discrimValue="default"'
+    )
+
+
+def test_spare_without_discrim_value_next_to_another_spare_is_an_error():
+    with pytest.raises(LoweringError, match="missing required attribute 'discrimValue' on <spare>"):
+        spare_union('<spare discrimValue="1" bitCount="8"/><spare bitCount="8"/>')

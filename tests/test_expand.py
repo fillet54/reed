@@ -33,7 +33,7 @@ def find(variant: Variant, name: str) -> Variant:
 
 
 def field_names(struct: Struct) -> list[str]:
-    return [f.name for f in struct.fields]
+    return [getattr(f, "name", "(spare)") for f in struct.fields]
 
 
 COMMANDS = (
@@ -288,43 +288,65 @@ def test_expansion_refuses_an_icd_with_errors():
 
 
 def example_tree():
-    with open("tests/data/example-icd.xml") as f:
-        icds = EXAMPLE.lower([f.read()])
-    return {v.name: v for v in expand(icds, EXAMPLE)["http://example.com/schema"]}
+    icds = EXAMPLE.load(["tests/data/example-icd.xml"])  # and test-icd.xml, by import
+    return {v.name: v for trees in expand(icds, EXAMPLE).values() for v in trees}
 
 
 def test_example_icd_expands_commands_and_returns():
     trees = example_tree()
 
-    assert names(trees["command"]) == [
-        "command",
-        "command/power",
-        "command/ibit",
-        "command/changeFrequency",
+    assert names(trees["Command"]) == [
+        "Command",
+        "Command/power",
+        "Command/gimbalTrim",
+        "Command/spsBurn",
+        "Command/storeAp",
+        "Command/TestCommand",
+        "Command/uplinkData",
+        "Command/setCallsign",
+        "Command/default",
     ]
-    assert names(trees["return"]) == [
-        "return",
-        "return/status",
-        "return/status/vehicle",
-        "return/status/vehicle.computer",
-        "return/status/vehicle.computer.left",
-        "return/status/vehicle.computer.center",
-        "return/status/vehicle.computer.right",
-        "return/status/fuel",
-        "return/status/fuel.tanks",
-        "return/event",
+    assert names(trees["Return"]) == [
+        "Return",
+        "Return/status",
+        "Return/status/GNC",
+        "Return/status/GNC.IMU.inner",
+        "Return/status/GNC.IMU.middle",
+        "Return/status/GNC.IMU.outer",
+        "Return/status/SPS.propellant",
+        "Return/status/SPS.propellant.fuel",
+        "Return/status/SPS.propellant.oxidizer",
+        "Return/status/EPS.fuelCell.fc1",
+        "Return/status/EPS.fuelCell.fc2",
+        "Return/status/EPS.fuelCell.fc3",
+        "Return/fault",
+        "Return/batteryVoltages",
+        "Return/crewMessage",
+    ]
+
+
+def test_example_test_commands_have_their_own_tree():
+    assert names(example_tree()["TestCommand"]) == [
+        "TestCommand",
+        "TestCommand/lampTest",
+        "TestCommand/imuSelfTest",
+        "TestCommand/memoryCheck",
     ]
 
 
 def test_system_id_variant_fixes_the_whole_system_id():
-    tanks = find(example_tree()["return"], "return/status/fuel.tanks")
+    fc2 = find(example_tree()["Return"], "Return/status/EPS.fuelCell.fc2")
 
-    assert tanks.id == ("return", 1, (10, 1, 0))
-    assert tanks.message.consts == (("header/id", 1), ("returnBody/systemId", (10, 1, 0)))
-    assert field_names(tanks.message.body.fields[1]) == ["systemId", "info"]
+    assert fc2.id == ("Return", 1, (4, 1, 2))
+    assert fc2.message.consts == (
+        ("header/ReturnNumber", 1),
+        ("ReturnBody/systemId", (4, 1, 2)),
+    )
+    assert field_names(fc2.message.body.fields[1]) == ["systemId", "(spare)", "detail"]
+    assert field_names(fc2.message.body.fields[1].fields[2]) == ["output"]
 
 
 def test_plain_system_id_field_is_not_split():
-    power = find(example_tree()["command"], "command/power")
+    power = find(example_tree()["Command"], "Command/power")
 
     assert power.children == ()

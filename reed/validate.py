@@ -10,16 +10,17 @@ node of that type and a Context, and yields Issues:
 
 Dialects extend validation by adding rules to BASE_RULES (see reed.dialect).
 Node types a rule can target: Message, Struct, Union, Case, Array, Int,
-Scaled, String, Spare, MessageRef. A Case rule sees the union as `ctx.node`.
+Scaled, Float, String, Bytes, Spare, MessageRef. A Case rule sees the union as `ctx.node`.
 """
 
 from __future__ import annotations
 
 import math
+import struct
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
-from .ir import VARIABLE, Array, Case, Domain, Icd, Int, Message, Scaled, String, Struct, Union
+from .ir import VARIABLE, Array, Bytes, Case, Domain, Float, Icd, Int, Message, Scaled, String, Struct, Union
 from .issues import Issue
 from .paths import Frame, Stack, children, is_before, push, resolve, root_stack
 from .size import Size, Sizer
@@ -207,6 +208,17 @@ def count_field(node, ctx):
         yield ctx.error("count-not-integer", f"countValue {node.count!r} is not an integer field")
 
 
+@rule(Bytes)
+def byte_count_field(node, ctx):
+    if not node.count:
+        return
+    target = yield from _check_path(ctx, node.count, "countVariable")
+    if target is not None and not isinstance(target.node, Int):
+        yield ctx.error(
+            "count-not-integer", f"countVariable {node.count!r} is not an integer field"
+        )
+
+
 @rule(Struct)
 def duplicate_domain_values(node, ctx):
     if not node.domain:
@@ -265,6 +277,18 @@ def scalar_default(node, ctx):
     yield from _check_default(node, raw, ctx)
 
 
+@rule(Float)
+def float_default(node, ctx):
+    if node.default is None or node.bits != 32:
+        return
+    try:
+        struct.pack(">f", node.default)
+    except OverflowError:
+        yield ctx.error(
+            "default-out-of-range", f"default {node.default} does not fit in a 32-bit float"
+        )
+
+
 def _check_default(node, raw, ctx):
     """A default must fit in the field's bits (it may be outside restricted values)."""
     if raw is None:
@@ -289,7 +313,7 @@ def _ref_tag_mismatch(node, ctx):
 
 
 ref_tag_mismatch = tuple(
-    Rule(t, _ref_tag_mismatch, "ref_tag_mismatch") for t in (Int, Scaled, Struct, Array)
+    Rule(t, _ref_tag_mismatch, "ref_tag_mismatch") for t in (Int, Scaled, Float, Struct, Array)
 )
 
 
@@ -300,9 +324,11 @@ BASE_RULES: tuple[Rule, ...] = (
     discriminator,
     duplicate_case_values,
     count_field,
+    byte_count_field,
     duplicate_domain_values,
     string_bits,
     integer_default,
     scalar_default,
+    float_default,
     *ref_tag_mismatch,
 )
