@@ -14,6 +14,7 @@ try { const t = localStorage.getItem("reed-theme"); if (t === "light" || t === "
   --bg: #FFFEFA; --panel: #F4F3ED; --text: #252C2A; --muted: #5B655E; --faint: #8C948E; --line: #DEDFD8;
   --accent: #285F51; --accent-soft: #E1ECE7; --fixed: #805B10; --fixed-soft: #F4EAD2;
   --spare: #E9E8E1; --hilite: #FBEFC0;
+  --seg-s: 26%; --seg-l: 89%; --seg-edge: 77%;  /* bit-map tones: quiet, like the tables */
   --add: #2F6B3A; --add-soft: #E2EFDF; --del: #9C3A2C; --del-soft: #F7E3DE;
   --chg: #7A5A12; --chg-soft: #F6EDD3; --edit: #3D5C8C; --edit-soft: #E2E9F4;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -26,6 +27,7 @@ try { const t = localStorage.getItem("reed-theme"); if (t === "light" || t === "
   --bg: #181C19; --panel: #222923; --text: #E6E9E6; --muted: #C7CEC9; --faint: #89918B; --line: #39423B;
   --accent: #B7D7C8; --accent-soft: #2A3A33; --fixed: #E2CA8A; --fixed-soft: #3A3320;
   --spare: #2A312B; --hilite: #4A4217;
+  --seg-s: 16%; --seg-l: 24%; --seg-edge: 34%;
   --add: #9FD3A6; --add-soft: #233A27; --del: #F0A595; --del-soft: #42261F;
   --chg: #E5C77E; --chg-soft: #3A3220; --edit: #A9C1EA; --edit-soft: #253043;
   }
@@ -35,6 +37,7 @@ try { const t = localStorage.getItem("reed-theme"); if (t === "light" || t === "
   --bg: #181C19; --panel: #222923; --text: #E6E9E6; --muted: #C7CEC9; --faint: #89918B; --line: #39423B;
   --accent: #B7D7C8; --accent-soft: #2A3A33; --fixed: #E2CA8A; --fixed-soft: #3A3320;
   --spare: #2A312B; --hilite: #4A4217;
+  --seg-s: 16%; --seg-l: 24%; --seg-edge: 34%;
   --add: #9FD3A6; --add-soft: #233A27; --del: #F0A595; --del-soft: #42261F;
   --chg: #E5C77E; --chg-soft: #3A3220; --edit: #A9C1EA; --edit-soft: #253043;
 }
@@ -99,12 +102,17 @@ h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: v
 .map .w { display: grid; grid-template-columns: 34px repeat(var(--bits), 1fr); gap: 2px; }
 .map .n { color: var(--muted); text-align: right; padding-right: 6px; align-self: center; }
 .map .hdr span { color: var(--muted); text-align: center; }
-.map .seg { min-height: 26px; border-radius: 3px; padding: 4px 5px; overflow: hidden; white-space: nowrap;
-  text-overflow: ellipsis; cursor: pointer; color: #1d1d1b; }
+.map .seg { --h: 150; background: hsl(var(--h) var(--seg-s) var(--seg-l));
+  border: 1px solid hsl(var(--h) var(--seg-s) var(--seg-edge));
+  min-height: 26px; border-radius: 3px; padding: 4px 5px; overflow: hidden; white-space: nowrap;
+  text-overflow: ellipsis; cursor: pointer; color: var(--text); }
 .map .seg.spare { background: repeating-linear-gradient(45deg, var(--spare), var(--spare) 4px, transparent 4px, transparent 8px);
   color: var(--muted); border: 1px solid var(--line); }
 .map .seg.more { background: none; border: 1px dashed var(--line); color: var(--muted); cursor: default; }
-.map .seg:hover:not(.more) { outline: 2px solid var(--accent); }
+.map .seg:hover:not(.more) { outline: 2px solid var(--accent); outline-offset: -1px; }
+/* Six muted hues from the page's palette, taken in field order so neighbours differ. */
+.map .t0 { --h: 150; } .map .t1 { --h: 208; } .map .t2 { --h: 40; }
+.map .t3 { --h: 14; } .map .t4 { --h: 180; } .map .t5 { --h: 272; }
 
 table.fields { border-collapse: separate; border-spacing: 0; width: 100%; max-width: 1200px; table-layout: fixed; }
 col.c-word { width: 58px; } col.c-grp { width: 30px; } col.c-name { width: 190px; }
@@ -428,11 +436,12 @@ function show(key) {
   const tiles = rows => rows.map(([r, i]) => [r, i]).filter(([r]) => r.map && r.kind !== "group");
   const all = v.rows.map((r, i) => [r, i]);
   if (DIFF && v.rows.some(r => r.change === "added" || r.change === "removed" || layoutChanged(r))) {
+    const tones = toneMap(tiles(all));
     main.append(el("h3", {text: "Bit map — new"}));
-    main.append(bitMap(v.word_bits, tiles(all.filter(([r]) => r.change !== "removed"))));
+    main.append(bitMap(v.word_bits, tiles(all.filter(([r]) => r.change !== "removed")), tones));
     main.append(el("h3", {text: "Bit map — old"}));
     main.append(bitMap(v.word_bits, tiles(all.filter(([r]) => r.change !== "added")
-      .map(([r, i]) => [Object.assign({}, r, r.was, {old: true}), i]))));
+      .map(([r, i]) => [Object.assign({}, r, r.was, {old: true}), i])), tones));
   } else {
     main.append(el("h3", {text: "Bit map"}));
     main.append(bitMap(v.word_bits, tiles(all)));
@@ -558,14 +567,9 @@ function place(row, wordBits) {
   return (row.relative ? "+" : "") + w + "." + String(b).padStart(2, "0");
 }
 
-function hue(name) {
-  let h = 0;
-  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360;
-  return h;
-}
-
 // `tiles`: [row, index] pairs of the rows that tile the message, in order.
-function bitMap(W, tiles) {
+// `tones`: row index -> tone, so a field keeps its tone in both of a diff's maps.
+function bitMap(W, tiles, tones = toneMap(tiles)) {
   // Segments up to the first field whose size or offset isn't known.
   const segs = [];
   let end = 0, open = false;
@@ -597,9 +601,9 @@ function bitMap(W, tiles) {
       const path = s.r.path || s.r.name;
       const seg = el("div", {
         class: "seg" + (spare ? " spare" : "") + (s.to == null ? " more" : "") +
+          (spare || s.to == null ? "" : " t" + tones.get(s.i)) +
           (s.r.change && !(s.r.change === "changed" && !layoutChanged(s.r)) ? " d-" + s.r.change : ""),
-        style: `grid-column:${a - lo + 2}/${b - lo + 2};` +
-          (spare || s.to == null ? "" : `background:hsl(${hue(label)} 60% 78%)`),
+        style: `grid-column:${a - lo + 2}/${b - lo + 2}`,
         title: `${spare ? label : path}: ${s.r.type}, ${s.r.size}` + (s.r.offset != null ? ` at ${place(s.r, W)}` : ""),
         text: s.to == null ? label + " … (variable size)" : label,
         onclick: () => hilite(s.i),
@@ -612,6 +616,12 @@ function bitMap(W, tiles) {
     map.append(el("div", {class: "note", text: "…then fields of variable size; see the table."}));
   }
   return map;
+}
+
+function toneMap(tiles) {
+  const tones = new Map();
+  tiles.filter(([r]) => r.kind !== "spare" && r.kind !== "pad").forEach(([, i], k) => tones.set(i, k % 6));
+  return tones;
 }
 
 function hilite(i) {
