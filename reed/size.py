@@ -185,6 +185,17 @@ class Sizer:
             self.active.discard(node.target)
 
 
+def describe_size(message: Message, icds=None, choose=None) -> str:
+    """The padded size, plus the bits the fields use when they differ."""
+    padded = size_of(message, icds, choose)
+    used = size_of(message, icds, choose, padded=False)
+    if used == padded:
+        return str(padded)
+    if used.is_fixed:
+        return f"{padded} ({used.lo} used)"
+    return f"{padded} ({used} used)"
+
+
 def count_range(node) -> tuple[int, int] | None:
     """Smallest and largest value a count field can hold."""
     if not isinstance(node, Int):

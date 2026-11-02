@@ -119,6 +119,17 @@ A variant is a message with some unions resolved: each chosen union is replaced 
 - **Errors first:** expansion refuses an ICD with validation errors. Duplicate case values would give two variants one id.
 - A listed pattern that matches no union is a warning.
 
+### HTML viewer
+- `reed html FILES --dialect example -o icd.html [--title T]` writes one self-contained page (no server, no network): the left side is each ICD's variant tree with a filter box; the right side shows the chosen variant's size, id, fixed discriminators, the field table and a word-by-word bit map. The URL hash names the variant (`#example:Command/power`), so links can be shared.
+- The field table's columns are word, field, bits, type and description:
+  - **word**: the 16-bit word number from 0 (`2–3` for a field that spans words); fields in the same word share the cell, except across union cases;
+  - **field**: groups, unions, cases and arrays are columns spanning their fields' rows, with vertical labels (`power = 1`, `CommandBody union on ../header/CommandNumber`, `batteries × ../count`) that stay pinned at the top while their rows scroll past. A group with one field has no room for a vertical label, so the field's name carries it as a caption;
+  - **bits**: numbered MSB first, 15 to 0 (`15–12`; `1–11` for a field that runs from bit 1 of one word into the next);
+  - **type**: the type, or for a field with named values the value-to-name mapping, with the value fixed in this variant highlighted;
+  - **description**: label, description, default.
+- `reed.html.field_rows(message, icds)` builds the rows: each field's offset, `word` and `bit_span` labels (`word_span()`: `…` for an unknown end, `—` for an unknown offset or no bits, `+` for offsets relative to an array element), size, type, named values, default, docs and fixed value. A system ID's fixed tuple is shown on its group and split over its fields. A union that wasn't split lists every case from the same offset; a carried message is one row linking to its own tree. The last word's implicit spare is a `(pad)` row.
+- Variants and links are keyed `alias:name` (the namespace when there's no alias). The page template is `reed/viewer.html`; the data goes in as JSON.
+
 ### Codec
 `reed/codec.py`: `encode(message, value, icds) -> bytes` and `decode(message, data, icds) -> dict`, using a sequential bit cursor (no precomputed offsets).
 - **Value shapes:**

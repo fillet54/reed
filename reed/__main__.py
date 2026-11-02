@@ -1,4 +1,4 @@
-"""Command line: `reed check FILE...` and `reed expand FILE...`."""
+"""Command line: `reed check FILE...`, `reed expand FILE...` and `reed html FILE...`."""
 
 from __future__ import annotations
 
@@ -6,12 +6,13 @@ import argparse
 import resource
 import sys
 import time
+from pathlib import Path
 
 from . import dialects
 from .expand import ExpandError, Variant, expand
 from .ir import Union
 from .lower import LoweringError
-from .size import size_of
+from .size import describe_size
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -28,10 +29,34 @@ def main(argv: list[str] | None = None) -> int:
     tree.add_argument("files", nargs="+", help="ICD XML files (imports are found next to them)")
     tree.add_argument("--dialect", choices=dialects.NAMES, default="base")
 
+    view = commands.add_parser("html", help="write a browsable page of the expanded messages")
+    view.add_argument("files", nargs="+", help="ICD XML files (imports are found next to them)")
+    view.add_argument("--dialect", choices=dialects.NAMES, default="base")
+    view.add_argument("-o", "--output", default="icd.html", help="page to write (icd.html)")
+    view.add_argument("--title", help="page title (the first file's name)")
+
     args = parser.parse_args(argv)
     if args.command == "expand":
         return run_expand(args)
+    if args.command == "html":
+        return run_html(args)
     return run_check(args)
+
+
+def run_html(args) -> int:
+    from .html import page
+
+    dialect = dialects.get(args.dialect)
+    title = args.title or Path(args.files[0]).stem
+    try:
+        icds = dialect.load(args.files)
+        text = page(icds, dialect, title=title)
+        Path(args.output).write_text(text, encoding="utf-8")
+    except (OSError, LoweringError, ExpandError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"wrote {args.output}")
+    return 0
 
 
 def run_expand(args) -> int:
@@ -106,17 +131,6 @@ def print_sizes(icds) -> None:
                     for case in field.cases:
                         size = describe_size(message, icds, choose={id(field): case})
                         print(f"  {case.name}  {size}")
-
-
-def describe_size(message, icds, choose=None) -> str:
-    """The padded size, plus the bits the fields use when they differ."""
-    padded = size_of(message, icds, choose)
-    used = size_of(message, icds, choose, padded=False)
-    if used == padded:
-        return str(padded)
-    if used.is_fixed:
-        return f"{padded} ({used.lo} used)"
-    return f"{padded} ({used} used)"
 
 
 def plural(n: int, word: str) -> str:

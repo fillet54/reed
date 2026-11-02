@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<style>
+:root {
+  --bg: #fbfbfa; --panel: #f2f1ee; --text: #1d1d1b; --muted: #6b6a66; --line: #dddbd5;
+  --accent: #2f5fb3; --accent-soft: #e3ebf8; --fixed: #8a4b0f; --fixed-soft: #f6eadb;
+  --spare: #e7e5df; --hilite: #fff3c4;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #18191b; --panel: #202124; --text: #e6e4df; --muted: #9a9892; --line: #34353a;
+    --accent: #8db0f0; --accent-soft: #23314c; --fixed: #f0b878; --fixed-soft: #3d2d1b;
+    --spare: #2b2c30; --hilite: #4a3f13;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--text); font: 14px/1.45 var(--sans); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, .mono { font-family: var(--mono); font-size: 12.5px; }
+
+.app { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
+nav { background: var(--panel); border-right: 1px solid var(--line); overflow: auto; padding: 14px 10px 40px; }
+main { overflow: auto; padding: 20px 28px 60px; }
+@media (max-width: 760px) {
+  .app { grid-template-columns: 1fr; height: auto; }
+  nav { max-height: 45vh; border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 16px; }
+}
+
+nav h1 { font-size: 15px; margin: 0 4px 2px; }
+nav .sub { color: var(--muted); font-size: 12px; margin: 0 4px 10px; }
+#filter { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); color: var(--text); font: inherit; margin-bottom: 10px; }
+.icd { margin: 10px 4px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.tree, .tree ul { list-style: none; margin: 0; padding: 0; }
+.tree ul { padding-left: 14px; border-left: 1px solid var(--line); margin-left: 7px; }
+.tree li > div { display: flex; align-items: center; gap: 2px; }
+.tree .tog { width: 16px; flex: none; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0; font-size: 10px; }
+.tree a { display: block; flex: 1; padding: 2px 6px; border-radius: 4px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree a:hover { background: var(--line); text-decoration: none; }
+.tree a.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.tree li.shut > ul { display: none; }
+.tree li.hidden { display: none; }
+
+.crumbs { color: var(--muted); font-size: 12.5px; margin-bottom: 4px; }
+h2 { font-size: 22px; margin: 0 0 4px; word-break: break-word; }
+.facts { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); margin: 6px 0 4px; }
+.facts b { color: var(--text); font-weight: 600; }
+.doc { margin: 6px 0; max-width: 70ch; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.chip { border-radius: 999px; padding: 1px 9px; font: 12px var(--mono); background: var(--panel); border: 1px solid var(--line); }
+.chip.fixed { background: var(--fixed-soft); color: var(--fixed); border-color: transparent; }
+h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 26px 0 8px; }
+.kids a { margin-right: 12px; display: inline-block; }
+
+.map { display: grid; gap: 2px; font: 11px var(--mono); max-width: 980px; }
+.map .w { display: grid; grid-template-columns: 34px repeat(var(--bits), 1fr); gap: 2px; }
+.map .n { color: var(--muted); text-align: right; padding-right: 6px; align-self: center; }
+.map .hdr span { color: var(--muted); text-align: center; }
+.map .seg { min-height: 26px; border-radius: 3px; padding: 4px 5px; overflow: hidden; white-space: nowrap;
+  text-overflow: ellipsis; cursor: pointer; color: #1d1d1b; }
+.map .seg.spare { background: repeating-linear-gradient(45deg, var(--spare), var(--spare) 4px, transparent 4px, transparent 8px);
+  color: var(--muted); border: 1px solid var(--line); }
+.map .seg.more { background: none; border: 1px dashed var(--line); color: var(--muted); cursor: default; }
+.map .seg:hover:not(.more) { outline: 2px solid var(--accent); }
+
+table.fields { border-collapse: separate; border-spacing: 0; width: 100%; max-width: 1200px; table-layout: fixed; }
+col.c-word { width: 58px; } col.c-grp { width: 30px; } col.c-name { width: 190px; }
+col.c-bits { width: 70px; } col.c-type { width: 30%; }
+.fields th, .fields td { text-align: left; vertical-align: top; padding: 5px 10px;
+  border-bottom: 1px solid var(--line); border-left: 1px solid var(--line); }
+.fields tr > :last-child { border-right: 1px solid var(--line); }
+.fields th { font-size: 12px; color: var(--muted); font-weight: 600; position: sticky; top: -20px; z-index: 2;
+  background: var(--panel); border-top: 1px solid var(--line); }
+.fields td.word, .fields td.bits { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
+.fields td.word { color: var(--muted); text-align: center; }
+.fields td.name { overflow-wrap: anywhere; font-weight: 500; }
+.fields td.type { font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
+.fields td.grp { padding: 6px 0; background: var(--panel); }
+.fields td.grp.k-case { background: var(--accent-soft); }
+.fields td.grp > div { position: sticky; top: calc(var(--head, 30px) - 14px); margin: 0 auto; width: max-content;
+  writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; font-weight: 600; font-size: 12.5px; }
+.fields td.name .cap { display: block; font-size: 11.5px; font-weight: 600; color: var(--accent); }
+.fields td.name .cap .what { font-weight: 400; font-family: var(--mono); }
+.fields td.grp .what { font-weight: 400; color: var(--muted); font-family: var(--mono); font-size: 11.5px; margin-top: 6px; }
+.fields td.grp.k-case .what { color: var(--accent); }
+.fields tr.k-spare td.name, .fields tr.k-pad td.name, .fields tr.k-spare td.type, .fields tr.k-pad td.type { color: var(--muted); font-weight: 400; }
+.fields tr.hilite td:not(.grp):not(.word) { background: var(--hilite); }
+.map-vals { display: grid; grid-template-columns: max-content 1fr; gap: 1px 10px; }
+.map-vals .v { color: var(--muted); text-align: right; }
+.map-vals .on { background: var(--fixed-soft); color: var(--fixed); border-radius: 3px; padding: 0 3px; margin: 0 -3px; }
+.fixed-val { display: inline-block; margin-top: 3px; }
+.vals { display: flex; flex-wrap: wrap; gap: 4px; }
+.vals .chip { font-size: 11.5px; }
+.note { color: var(--muted); font-size: 12.5px; }
+.empty { color: var(--muted); margin-top: 40px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav>
+    <h1 id="title"></h1>
+    <div class="sub" id="sub"></div>
+    <input id="filter" type="search" placeholder="Filter messages…" aria-label="Filter messages">
+    <div id="tree"></div>
+  </nav>
+  <main id="main"><p class="empty">Pick a message.</p></main>
+</div>
+<script id="icd-data" type="application/json">{{data}}</script>
+<script>
+"use strict";
+const DATA = JSON.parse(document.getElementById("icd-data").textContent);
+const byKey = new Map();     // key -> {v, parent, icd}
+const links = new Map();     // key -> nav <a>
+let current = null;         // the variant shown
+
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k === "text") e.textContent = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid != null) e.append(kid);
+  return e;
+}
+
+function index(v, parent, icd) {
+  byKey.set(v.key, {v, parent, icd});
+  v.children.forEach(c => index(c, v, icd));
+}
+DATA.icds.forEach(icd => icd.messages.forEach(m => index(m, null, icd)));
+
+// --- navigation ------------------------------------------------------------
+
+function navItem(v) {
+  const a = el("a", {href: "#" + encodeURIComponent(v.key), title: v.name, text: shortName(v)});
+  links.set(v.key, a);
+  const li = el("li", {"data-name": v.name.toLowerCase()});
+  const row = el("div", {}, v.children.length
+    ? el("button", {class: "tog", "aria-label": "expand", onclick: () => toggle(li)}, "▸")
+    : el("span", {class: "tog"}), a);
+  li.append(row);
+  if (v.children.length) {
+    li.classList.add("shut");
+    li.append(el("ul", {}, v.children.map(navItem)));
+  }
+  return li;
+}
+
+function shortName(v) {
+  const parts = v.name.split("/");
+  return parts[parts.length - 1];
+}
+
+function toggle(li, open) {
+  const shut = open === undefined ? !li.classList.contains("shut") : !open;
+  li.classList.toggle("shut", shut);
+  const b = li.querySelector(":scope > div > .tog");
+  if (b && b.tagName === "BUTTON") b.textContent = shut ? "▸" : "▾";
+}
+
+function buildNav() {
+  document.getElementById("title").textContent = DATA.title;
+  document.title = DATA.title;
+  const count = byKey.size;
+  document.getElementById("sub").textContent =
+    `${DATA.icds.length} ICD${DATA.icds.length === 1 ? "" : "s"} · ${count} variants · ${DATA.dialect} dialect`;
+  const tree = document.getElementById("tree");
+  for (const icd of DATA.icds) {
+    tree.append(el("div", {class: "icd", title: icd.namespace, text: icd.label || icd.namespace || "ICD"}));
+    tree.append(el("ul", {class: "tree"}, icd.messages.map(navItem)));
+  }
+  document.getElementById("filter").addEventListener("input", e => filter(e.target.value.trim().toLowerCase()));
+}
+
+function filter(text) {
+  // Show items whose name matches, and their ancestors; open the ancestors.
+  const visit = li => {
+    const kids = [...li.querySelectorAll(":scope > ul > li")];
+    const kidHit = kids.map(visit).some(Boolean);
+    const hit = !text || li.dataset.name.includes(text) || kidHit;
+    li.classList.toggle("hidden", !hit);
+    if (text && kidHit) toggle(li, true);
+    return hit;
+  };
+  document.querySelectorAll(".tree > li").forEach(visit);
+}
+
+function reveal(key) {
+  links.forEach(a => a.classList.remove("on"));
+  const a = links.get(key);
+  if (!a) return;
+  a.classList.add("on");
+  for (let li = a.closest("li").parentElement.closest("li"); li; li = li.parentElement.closest("li")) toggle(li, true);
+  a.scrollIntoView({block: "nearest"});
+}
+
+// --- the selected variant --------------------------------------------------
+
+function show(key) {
+  const entry = byKey.get(key);
+  const main = document.getElementById("main");
+  main.replaceChildren();
+  if (!entry) { main.append(el("p", {class: "empty", text: "Pick a message."})); return; }
+  const {v, icd} = entry;
+  current = v;
+  reveal(key);
+
+  const chain = [];
+  for (let p = entry.parent; p; p = byKey.get(p.key).parent) chain.unshift(p);
+  main.append(el("div", {class: "crumbs"},
+    el("span", {text: (icd.label || icd.namespace || "ICD") + " · "}),
+    chain.flatMap(p => [el("a", {href: "#" + encodeURIComponent(p.key), text: shortName(p)}), " / "])));
+  main.append(el("h2", {text: v.name}));
+  main.append(el("div", {class: "facts"},
+    el("span", {}, "size ", el("b", {text: v.size})),
+    el("span", {}, "id ", el("b", {class: "mono", text: "(" + v.id + ")"})),
+    el("span", {}, "words ", el("b", {text: v.word_bits + " bits"}))));
+  if (v.label) main.append(el("p", {class: "doc", text: v.label}));
+  if (v.description) main.append(el("p", {class: "doc", text: v.description}));
+  if (v.consts.length) {
+    main.append(el("div", {class: "chips"},
+      v.consts.map(([path, value]) => el("span", {class: "chip fixed", title: "fixed in this variant",
+        text: `${path} = ${fmt(value)}`}))));
+  }
+  if (v.children.length) {
+    main.append(el("h3", {text: `Variants (${v.children.length})`}));
+    main.append(el("div", {class: "kids"},
+      v.children.map(c => el("a", {href: "#" + encodeURIComponent(c.key), text: shortName(c)}))));
+  }
+
+  main.append(el("h3", {text: "Fields"}));
+  main.append(fieldTable(v));
+  main.append(el("h3", {text: "Bit map"}));
+  main.append(bitMap(v));
+  main.scrollTop = 0;
+}
+
+function fmt(value) {
+  return Array.isArray(value) ? "(" + value.map(fmt).join(", ") + ")" : String(value);
+}
+
+function place(row, wordBits) {
+  if (row.offset == null) return "—";
+  const w = Math.floor(row.offset / wordBits), b = row.offset % wordBits;
+  return (row.relative ? "+" : "") + w + "." + String(b).padStart(2, "0");
+}
+
+function hue(name) {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return h;
+}
+
+function bitMap(v) {
+  const W = v.word_bits;
+  const tiles = v.rows.map((r, i) => [r, i]).filter(([r]) => r.map && r.kind !== "group");
+  // Segments up to the first field whose size or offset isn't known.
+  const segs = [];
+  let end = 0, open = false;
+  for (const [r, i] of tiles) {
+    if (r.offset == null) { open = true; break; }
+    if (r.bits == null) { segs.push({r, i, from: r.offset, to: null}); open = true; break; }
+    segs.push({r, i, from: r.offset, to: r.offset + r.bits});
+    end = r.offset + r.bits;
+  }
+  const map = el("div", {class: "map", style: `--bits:${W}`});
+  const hdr = el("div", {class: "w hdr"}, el("span", {class: "n", text: "word"}));
+  for (let c = 0; c < W; c++) {  // bit numbers MSB first, as in the table
+    const b = W - 1 - c;
+    hdr.append(el("span", {text: W <= 16 || b % 4 === 3 || b === 0 ? String(b) : ""}));
+  }
+  map.append(hdr);
+
+  const last = segs.length ? segs[segs.length - 1] : null;
+  const words = Math.max(1, Math.ceil((last && last.to == null ? last.from + 1 : end) / W));
+  for (let w = 0; w < words; w++) {
+    const line = el("div", {class: "w"}, el("span", {class: "n", text: String(w)}));
+    const lo = w * W, hi = lo + W;
+    for (const s of segs) {
+      const to = s.to == null ? hi : s.to;
+      const a = Math.max(s.from, lo), b = Math.min(to, hi);
+      if (a >= b) continue;
+      const spare = s.r.kind === "spare" || s.r.kind === "pad";
+      const label = spare ? "spare" : s.r.kind === "union" ? s.r.name + " (union)" : s.r.name;
+      const path = s.r.path || s.r.name;
+      const seg = el("div", {
+        class: "seg" + (spare ? " spare" : "") + (s.to == null ? " more" : ""),
+        style: `grid-column:${a - lo + 2}/${b - lo + 2};` +
+          (spare || s.to == null ? "" : `background:hsl(${hue(label)} 60% 78%)`),
+        title: `${spare ? label : path}: ${s.r.type}, ${s.r.size}` + (s.r.offset != null ? ` at ${place(s.r, W)}` : ""),
+        text: s.to == null ? label + " … (variable size)" : label,
+        onclick: () => hilite(s.i),
+      });
+      line.append(seg);
+    }
+    map.append(line);
+  }
+  if (open && !(last && last.to == null)) {
+    map.append(el("div", {class: "note", text: "…then fields of variable size; see the table."}));
+  }
+  return map;
+}
+
+function hilite(i) {
+  document.querySelectorAll("tr.hilite").forEach(tr => tr.classList.remove("hilite"));
+  let tr = null;  // a container has no row of its own: use its first field's
+  for (let j = i; !tr && j < (current ? current.rows.length : 0); j++) tr = document.getElementById("row-" + j);
+  if (tr) { tr.classList.add("hilite"); tr.scrollIntoView({block: "center", behavior: "smooth"}); }
+}
+
+const CONTAINERS = new Set(["group", "union", "case", "array"]);
+
+// Groups, unions, cases and arrays become columns spanning the rows of their
+// fields, with vertical labels that stay in view; fields are rows.
+function fieldTable(v) {
+  const rows = v.rows;
+  // How many field rows each container spans; an empty container is a field.
+  const span = rows.map(() => 0);
+  const leaf = rows.map((r, i) => !CONTAINERS.has(r.kind) ||
+    !(i + 1 < rows.length && rows[i + 1].depth > r.depth));
+  const open = [];
+  rows.forEach((r, i) => {
+    while (open.length && rows[open[open.length - 1]].depth >= r.depth) open.pop();
+    if (leaf[i]) for (const j of open) span[j]++;
+    else open.push(i);
+  });
+  const depth = Math.max(0, ...rows.filter((r, i) => leaf[i]).map(r => r.depth));
+
+  // Field rows in the same word share a word cell, unless a new case starts.
+  const fields = [];
+  let pending = [], caseOf = [];
+  rows.forEach((r, i) => {
+    caseOf = caseOf.filter(c => rows[c].depth < r.depth);
+    if (!leaf[i]) { pending.push(i); if (r.kind === "case") caseOf.push(i); return; }
+    fields.push({i, starts: pending, scope: caseOf.length ? caseOf[caseOf.length - 1] : -1});
+    pending = [];
+  });
+  fields.forEach((f, k) => {
+    const prev = fields[k - 1];
+    const same = prev && prev.scope === f.scope && !f.starts.some(j => rows[j].kind === "case") &&
+      rows[prev.i].word === rows[f.i].word && rows[f.i].word !== "—";
+    f.word = same ? 0 : 1;
+    if (same) { let p = k - 1; while (!fields[p].word) p--; fields[p].word++; }
+  });
+
+  const body = el("tbody");
+  for (const f of fields) {
+    const r = rows[f.i];
+    const tr = el("tr", {id: "row-" + f.i, class: "k-" + r.kind});
+    if (f.word) tr.append(el("td", {class: "word", rowspan: f.word, text: r.word}));
+    for (const j of f.starts) tr.append(groupCell(rows[j], span[j]));
+    const spare = r.kind === "spare" || r.kind === "pad";
+    tr.append(
+      el("td", {class: "name", colspan: depth - r.depth + 1},
+        f.starts.filter(j => span[j] === 1).map(j => caption(rows[j])), spare ? "spare" : r.name),
+      el("td", {class: "bits", text: r.bit_span, title: r.size}),
+      el("td", {class: "type"}, typeCell(r)),
+      el("td", {class: "desc"}, descCell(r)));
+    body.append(tr);
+  }
+  const head = el("thead", {}, el("tr", {},
+    el("th", {text: "word"}),
+    el("th", {colspan: depth + 1, text: "field"}),
+    el("th", {text: "bits"}), el("th", {text: "type"}), el("th", {text: "description"})));
+  const table = el("table", {class: "fields"},
+    el("colgroup", {},
+      el("col", {class: "c-word"}),
+      Array.from({length: depth}, () => el("col", {class: "c-grp"})),
+      ["name", "bits", "type", "desc"].map(c => el("col", {class: "c-" + c}))),
+    head, body);
+  requestAnimationFrame(() => table.style.setProperty("--head", head.offsetHeight + "px"));
+  return table;
+}
+
+function groupWhat(r) {
+  return r.kind === "case" ? (r.case_value === "default" ? "default" : "= " + fmt(r.case_value))
+    : r.kind === "union" ? r.type
+    : r.kind === "array" ? r.type.replace("array ", "")
+    : r.const != null ? "= " + fmt(r.const) : "";
+}
+
+function groupCell(r, rowspan) {
+  const what = groupWhat(r);
+  const title = [r.path, r.type, r.label, r.description].filter(Boolean).join("\n");
+  // One row has no room for a vertical label: the field's name cell captions it.
+  const label = rowspan > 1 ? el("div", {}, r.name, what ? el("span", {class: "what", text: what}) : null) : null;
+  return el("td", {class: "grp k-" + r.kind, rowspan, title}, label);
+}
+
+function caption(r) {
+  return el("span", {class: "cap"}, r.name, " ", el("span", {class: "what", text: groupWhat(r)}), " ›");
+}
+
+function typeCell(r) {
+  if (r.link) return el("a", {href: "#" + encodeURIComponent(r.link), text: "message " + r.link});
+  if (r.values.length) {
+    return el("div", {class: "map-vals", title: r.type + (r.restrict ? ", restricted" : "")},
+      r.values.flatMap(([n, val]) => {
+        const on = r.const === val ? " on" : "";
+        return [el("span", {class: "v" + on, text: String(val)}), el("span", {class: on.trim(), text: n})];
+      }));
+  }
+  const kids = [r.kind === "pad" ? "implicit spare" : r.type];
+  if (r.const != null) kids.push(el("br"), el("span", {class: "chip fixed fixed-val", text: "= " + fmt(r.const)}));
+  return kids;
+}
+
+function descCell(r) {
+  const kids = [];
+  if (r.label) kids.push(el("div", {}, el("b", {text: r.label})));
+  if (r.description) kids.push(el("div", {text: r.description}));
+  if (r.kind === "pad") kids.push(el("div", {class: "note", text: "pads the message to a whole word"}));
+  if (r.default != null) {
+    const named = r.values.find(([, val]) => val === r.default);
+    kids.push(el("div", {class: "note", text: "default " + (named ? named[0] : r.default)}));
+  }
+  if (r.const != null && r.values.length) kids.push(el("div", {class: "note", text: "fixed in this variant"}));
+  return kids;
+}
+
+// --- routing ---------------------------------------------------------------
+
+function route() {
+  const key = decodeURIComponent(location.hash.slice(1));
+  if (byKey.has(key)) show(key);
+  else if (DATA.icds.length && DATA.icds[0].messages.length) show(DATA.icds[0].messages[0].key);
+}
+
+buildNav();
+window.addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>
