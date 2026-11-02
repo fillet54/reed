@@ -117,6 +117,19 @@ col.c-bits { width: 70px; } col.c-type { width: 30%; }
   writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; font-weight: 600; font-size: 12.5px; }
 .fields td.name .cap { display: block; font-size: 11.5px; font-weight: 600; color: var(--accent); }
 .fields td.name .cap .what { font-weight: 400; font-family: var(--mono); }
+.fields td.grp { cursor: pointer; }
+.fields td.grp:hover { background: var(--line); }
+.fields td.name .open { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 6px 0 0;
+  font: inherit; vertical-align: middle; }
+.fields td.name .open svg { width: 10px; height: 10px; }
+.fields tr.collapsed td.name { font-weight: 600; }
+.fields tr.collapsed td.name .what { font-weight: 400; color: var(--muted); font-family: var(--mono); font-size: 12px; margin-left: 6px; }
+.fields tr.collapsed td { background: var(--panel); }
+.fields-bar { display: flex; align-items: baseline; gap: 10px; margin: 26px 0 8px; }
+.fields-bar h3 { margin: 0; }
+.fields-bar button { border: 1px solid var(--line); background: var(--bg); color: var(--muted); border-radius: 5px;
+  font: 12px var(--sans); padding: 2px 9px; cursor: pointer; }
+.fields-bar button:hover { color: var(--text); border-color: var(--muted); }
 .fields td.grp .what { font-weight: 400; color: var(--muted); font-family: var(--mono); font-size: 11.5px; margin-top: 6px; }
 .fields td.grp.k-case .what { color: var(--accent); }
 .fields tr.k-spare td.name, .fields tr.k-pad td.name, .fields tr.k-spare td.type, .fields tr.k-pad td.type { color: var(--muted); font-weight: 400; }
@@ -306,8 +319,22 @@ function show(key) {
       v.children.map(c => el("a", {href: "#" + encodeURIComponent(c.key), text: shortName(c)}))));
   }
 
-  main.append(el("h3", {text: "Fields"}));
-  main.append(fieldTable(v));
+  const host = el("div");
+  const draw = () => host.replaceChildren(fieldTable(v, draw));
+  const containers = v.rows.filter(r => CONTAINERS.has(r.kind) && !r.hidden);
+  main.append(el("div", {class: "fields-bar"},
+    el("h3", {text: "Fields"}),
+    el("button", {type: "button", text: "Collapse all", onclick: () => {
+      const top = Math.min(...containers.map(r => r.depth));
+      containers.filter(r => r.depth === top).forEach(r => collapsed.add(r.path));
+      draw();
+    }}),
+    el("button", {type: "button", text: "Expand all", onclick: () => {
+      containers.forEach(r => collapsed.delete(r.path));
+      draw();
+    }})));
+  draw();
+  main.append(host);
   main.append(el("h3", {text: "Bit map"}));
   main.append(bitMap(v));
   main.scrollTop = 0;
@@ -381,18 +408,41 @@ function bitMap(v) {
 
 function hilite(i) {
   document.querySelectorAll("tr.hilite").forEach(tr => tr.classList.remove("hilite"));
-  let tr = null;  // a container has no row of its own: use its first field's
-  for (let j = i; !tr && j < (current ? current.rows.length : 0); j++) tr = document.getElementById("row-" + j);
+  const tr = document.getElementById("row-" + rowFor.get(i));
   if (tr) { tr.classList.add("hilite"); tr.scrollIntoView({block: "center", behavior: "smooth"}); }
 }
 
 const CONTAINERS = new Set(["group", "union", "case", "array"]);
+const collapsed = new Set();  // paths of collapsed containers, kept across variants
+const rowFor = new Map();     // row index -> index of the table row that shows it
 
 // Groups, unions, cases and arrays become columns spanning the rows of their
 // fields, with vertical labels that stay in view; fields are rows.
-function fieldTable(v) {
+function fieldTable(v, redraw) {
   // A nestContents="false" container has no column: skip its (hidden) row.
-  const index = v.rows.map((r, i) => i).filter(i => !v.rows[i].hidden);
+  // A collapsed container is one row: skip what's inside it.
+  const index = [], inside = new Set();  // collapsed containers
+  let shut = null;
+  rowFor.clear();
+  v.rows.forEach((r, i) => {
+    if (shut !== null && r.depth > v.rows[shut].depth) {
+      rowFor.set(i, shut);
+      return;
+    }
+    shut = null;
+    if (r.hidden) return;
+    index.push(i);
+    rowFor.set(i, i);
+    const next = v.rows[i + 1];
+    if (CONTAINERS.has(r.kind) && collapsed.has(r.path) && next && next.depth > r.depth) {
+      shut = i;
+      inside.add(i);
+    }
+  });
+  // A hidden row's bit-map segment points at the next row shown.
+  for (let i = v.rows.length - 1, after = null; i >= 0; i--) {
+    if (v.rows[i].hidden) { if (after !== null) rowFor.set(i, after); } else after = rowFor.get(i);
+  }
   const rows = index.map(i => v.rows[i]);
   // How many field rows each container spans; an empty container is a field.
   const span = rows.map(() => 0);
@@ -418,6 +468,7 @@ function fieldTable(v) {
   fields.forEach((f, k) => {
     const prev = fields[k - 1];
     const same = prev && prev.scope === f.scope && !f.starts.some(j => rows[j].kind === "case") &&
+      !inside.has(index[f.i]) && !inside.has(index[prev.i]) &&  // a collapsed row has its own word
       rows[prev.i].word === rows[f.i].word && rows[f.i].word !== "—";
     f.word = same ? 0 : 1;
     if (same) { let p = k - 1; while (!fields[p].word) p--; fields[p].word++; }
@@ -428,13 +479,24 @@ function fieldTable(v) {
     const r = rows[f.i];
     const tr = el("tr", {id: "row-" + index[f.i], class: "k-" + r.kind});
     if (f.word) tr.append(el("td", {class: "word", rowspan: f.word, text: r.word}));
-    for (const j of f.starts) tr.append(groupCell(rows[j], span[j]));
+    const fold = path => () => { collapsed.add(path); redraw(); };
+    for (const j of f.starts) tr.append(groupCell(rows[j], span[j], fold(rows[j].path)));
     const spare = r.kind === "spare" || r.kind === "pad";
+    const folded = inside.has(index[f.i]);
+    let name = spare ? "spare" : r.name;
+    if (folded) {
+      tr.classList.add("collapsed");
+      const b = el("button", {class: "open", type: "button", "aria-label": "Expand " + r.name,
+        title: "Expand", onclick: () => { collapsed.delete(r.path); redraw(); }});
+      b.innerHTML = CHEVRON;
+      const what = groupWhat(r);
+      name = [b, r.name, what && what !== r.name ? el("span", {class: "what", text: what}) : null];
+    }
     tr.append(
       el("td", {class: "name", colspan: depth - r.depth + 1},
-        f.starts.filter(j => span[j] === 1).map(j => caption(rows[j])), spare ? "spare" : r.name),
+        f.starts.filter(j => span[j] === 1).map(j => caption(rows[j])), name),
       el("td", {class: "bits", text: r.bit_span, title: r.size}),
-      el("td", {class: "type"}, typeCell(r)),
+      el("td", {class: "type"}, folded ? (r.kind === "array" ? r.type : "") : typeCell(r)),
       el("td", {class: "desc"}, descCell(r)));
     body.append(tr);
   }
@@ -459,12 +521,12 @@ function groupWhat(r) {
     : r.const != null ? "= " + fmt(r.const) : "";
 }
 
-function groupCell(r, rowspan) {
+function groupCell(r, rowspan, onclick) {
   const what = groupWhat(r);
-  const title = [r.path, r.type, r.label, r.description].filter(Boolean).join("\n");
+  const title = [r.path, r.type, r.label, r.description, "Click to collapse"].filter(Boolean).join("\n");
   // One row has no room for a vertical label: the field's name cell captions it.
   const label = rowspan > 1 ? el("div", {}, r.name, what ? el("span", {class: "what", text: what}) : null) : null;
-  return el("td", {class: "grp k-" + r.kind, rowspan, title}, label);
+  return el("td", {class: "grp k-" + r.kind, rowspan, title, onclick}, label);
 }
 
 function caption(r) {
