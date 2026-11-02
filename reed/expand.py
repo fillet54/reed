@@ -4,7 +4,9 @@ A variant is the message with some unions replaced by their chosen case:
 - the case's fields go in a group named after the union (an unnamed union's
   fields go straight into the parent);
 - the discriminator stays in the layout, fixed: `Message.consts` maps its
-  path in the variant to the case value.
+  path in the variant to the case value;
+- the case's label and description become the variant's (its body's meta);
+  the innermost chosen case that has any wins.
 
 The dialect lists which unions split, by the path of their discriminator in
 the original message, starting with the message name; `*` matches one level
@@ -111,6 +113,9 @@ class _Expander:
         body = build.struct(root_stack(self.message.body, self.message.name), ())
 
         message = self.message
+        if build.docs is not None:  # the innermost chosen case with docs documents the variant
+            label, description = build.docs
+            body = replace(body, meta=replace(body.meta, label=label, description=description))
         if choices:
             message = Message(
                 (message.name,) + names, body, tuple(build.consts), message.namespace
@@ -135,6 +140,7 @@ class _Build:
         self.consts: list[tuple[str, object]] = []
         self.next: Union | None = None  # first listed union not chosen yet
         self.paths: dict[tuple, tuple[str, ...]] = {}  # original index -> variant path
+        self.docs: tuple | None = None  # (label, description) of the last chosen case with any
 
     def struct(self, stack: Stack, path: tuple[str, ...]) -> Struct:
         node: Struct = stack[-1].node
@@ -171,6 +177,12 @@ class _Build:
         target = resolve(union.discrim, stack)
         if case.value is not DEFAULT:  # a default case leaves the discriminator open
             self.consts.append(("/".join(self.paths[target.index]), case.value))
+
+        docs = case.meta, getattr(case.body, "meta", case.meta)
+        label = docs[0].label or docs[1].label
+        description = docs[0].description or docs[1].description
+        if label or description:
+            self.docs = (label, description)
 
         inner = path + (union.name,) if union.name else path
         case_frame = children(frame)[chosen]

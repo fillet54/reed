@@ -282,6 +282,26 @@ def page(icds: Mapping[str, Icd], dialect, title: str = "ICD") -> str:
             for namespace, roots in trees.items()
         ],
     }
+    return render(data)
+
+
+def diff_page(tree: list[dict], dialect, title: str = "ICD diff", old: str = "old", new: str = "new") -> str:
+    """The viewer page in diff mode, for a merged tree from `reed.diff.diff`: a
+    summary of every change, then each variant's field table with them marked."""
+    from .diff import counts
+
+    data = {
+        "title": title,
+        "dialect": dialect.name,
+        "diff": {"old": old, "new": new, "counts": counts(tree)},
+        "icds": tree,
+    }
+    return render(data)
+
+
+def render(data: dict) -> str:
+    """The viewer page around `data`."""
+    title = data["title"]
     blob = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
     template = resources.files("reed").joinpath("viewer.html").read_text(encoding="utf-8")
     return (

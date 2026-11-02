@@ -14,6 +14,8 @@ try { const t = localStorage.getItem("reed-theme"); if (t === "light" || t === "
   --bg: #FFFEFA; --panel: #F4F3ED; --text: #252C2A; --muted: #5B655E; --faint: #8C948E; --line: #DEDFD8;
   --accent: #285F51; --accent-soft: #E1ECE7; --fixed: #805B10; --fixed-soft: #F4EAD2;
   --spare: #E9E8E1; --hilite: #FBEFC0;
+  --add: #2F6B3A; --add-soft: #E2EFDF; --del: #9C3A2C; --del-soft: #F7E3DE;
+  --chg: #7A5A12; --chg-soft: #F6EDD3; --edit: #3D5C8C; --edit-soft: #E2E9F4;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
@@ -24,6 +26,8 @@ try { const t = localStorage.getItem("reed-theme"); if (t === "light" || t === "
   --bg: #181C19; --panel: #222923; --text: #E6E9E6; --muted: #C7CEC9; --faint: #89918B; --line: #39423B;
   --accent: #B7D7C8; --accent-soft: #2A3A33; --fixed: #E2CA8A; --fixed-soft: #3A3320;
   --spare: #2A312B; --hilite: #4A4217;
+  --add: #9FD3A6; --add-soft: #233A27; --del: #F0A595; --del-soft: #42261F;
+  --chg: #E5C77E; --chg-soft: #3A3220; --edit: #A9C1EA; --edit-soft: #253043;
   }
 }
 :root[data-theme="dark"] {
@@ -31,6 +35,8 @@ try { const t = localStorage.getItem("reed-theme"); if (t === "light" || t === "
   --bg: #181C19; --panel: #222923; --text: #E6E9E6; --muted: #C7CEC9; --faint: #89918B; --line: #39423B;
   --accent: #B7D7C8; --accent-soft: #2A3A33; --fixed: #E2CA8A; --fixed-soft: #3A3320;
   --spare: #2A312B; --hilite: #4A4217;
+  --add: #9FD3A6; --add-soft: #233A27; --del: #F0A595; --del-soft: #42261F;
+  --chg: #E5C77E; --chg-soft: #3A3220; --edit: #A9C1EA; --edit-soft: #253043;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
@@ -143,6 +149,60 @@ col.c-bits { width: 70px; } col.c-type { width: 30%; }
 .vals .chip { font-size: 11.5px; }
 .note { color: var(--muted); font-size: 12.5px; }
 .empty { color: var(--muted); margin-top: 40px; }
+
+/* diff mode */
+.st { display: inline-block; border-radius: 999px; padding: 0 9px; font: 600 11.5px var(--sans); white-space: nowrap; }
+.st-incompatible { background: var(--del-soft); color: var(--del); }
+.st-compatible { background: var(--add-soft); color: var(--add); }
+.st-editorial { background: var(--edit-soft); color: var(--edit); }
+.st-unchanged { background: var(--panel); color: var(--muted); border: 1px solid var(--line); }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.dot.st-incompatible { background: var(--del); } .dot.st-compatible { background: var(--add); }
+.dot.st-editorial { background: var(--edit); } .dot.st-unchanged { background: var(--line); }
+.tree span.tog.dotted::before { display: none; }
+.tree .count.c-incompatible { color: var(--del); font-weight: 600; } .tree .count.c-compatible { color: var(--add); font-weight: 600; }
+.tree .count.c-editorial { color: var(--edit); font-weight: 600; }
+.tree .summary { display: flex; align-items: center; gap: 8px; padding: 4px 8px; margin-bottom: 6px; border-radius: 5px; color: var(--text); font-weight: 600; }
+.tree .summary:hover { background: var(--line); text-decoration: none; }
+.tree .summary.on { background: var(--accent-soft); color: var(--accent); }
+.only { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; margin: -4px 2px 10px; }
+.tiles { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0 6px; }
+.tile { border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; min-width: 120px; background: var(--bg); cursor: pointer; font: inherit; color: inherit; text-align: left; }
+.tile b { display: block; font-size: 22px; line-height: 1.2; }
+.tile[aria-pressed="false"] { opacity: .5; }
+.tile:hover { border-color: var(--muted); }
+.tile.st-incompatible b { color: var(--del); } .tile.st-compatible b { color: var(--add); }
+.tile.st-editorial b { color: var(--edit); } .tile.st-unchanged b { color: var(--muted); }
+.legend { color: var(--muted); font-size: 12.5px; max-width: 80ch; margin: 4px 0; }
+.legend dt { display: inline; font-weight: 600; } .legend dd { display: inline; margin: 0; }
+.legend div { margin: 2px 0; }
+.legend.keys { display: flex; gap: 18px; margin-top: 10px; }
+.legend .mark { display: inline-block; width: 1.1em; font-family: var(--mono); font-weight: 600; }
+table.summary { border-collapse: collapse; width: 100%; max-width: 1200px; margin-top: 8px; }
+.summary th, .summary td { text-align: left; vertical-align: top; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.summary th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--panel); position: sticky; top: -20px; }
+.summary td.msg { white-space: nowrap; font-weight: 500; }
+.summary ul, .changes { list-style: none; margin: 0; padding: 0; }
+.summary li, .changes li { display: flex; gap: 8px; align-items: baseline; margin: 1px 0; }
+.summary li .dot, .changes li .dot { position: relative; top: -1px; }
+.changes li { cursor: pointer; } .changes li:hover { text-decoration: underline; }
+.change-text { font-family: var(--mono); font-size: 12.5px; }
+.banner { border-radius: 6px; padding: 8px 12px; margin: 10px 0; max-width: 70ch; }
+.banner.st-compatible { background: var(--add-soft); } .banner.st-incompatible { background: var(--del-soft); }
+del { color: var(--del); text-decoration: line-through; text-decoration-thickness: 1px; }
+ins { text-decoration: none; }
+.fields tr.d-added td:not(.grp) { background: var(--add-soft); }
+.fields tr.d-removed td:not(.grp) { background: var(--del-soft); }
+.fields tr.d-removed td.name { text-decoration: line-through; text-decoration-color: var(--del); }
+.fields tr.d-changed td:not(.grp):not(.word) { background: var(--chg-soft); }
+.fields td.grp.d-added { box-shadow: inset 3px 0 var(--add); } .fields td.grp.d-removed { box-shadow: inset 3px 0 var(--del); }
+.fields .mark { display: inline-block; width: 1.1em; font-family: var(--mono); font-weight: 600; }
+.d-added .mark { color: var(--add); } .d-removed .mark { color: var(--del); } .d-changed .mark { color: var(--chg); }
+.fields .vals-del { color: var(--del); text-decoration: line-through; }
+.fields .vals-add { color: var(--add); font-weight: 600; }
+.map .seg.d-added { box-shadow: 0 0 0 2px var(--add); }
+.map .seg.d-removed { box-shadow: 0 0 0 2px var(--del); }
+.map .seg.d-changed { box-shadow: 0 0 0 2px var(--chg); }
 </style>
 </head>
 <body>
@@ -160,6 +220,8 @@ col.c-bits { width: 70px; } col.c-type { width: 30%; }
 <script>
 "use strict";
 const DATA = JSON.parse(document.getElementById("icd-data").textContent);
+const DIFF = DATA.diff || null;  // set on a diff page: {old, new, counts}
+const SEVERITY = ["incompatible", "compatible", "editorial", "unchanged"];  // worst first
 const byKey = new Map();     // key -> {v, parent, icd}
 const links = new Map();     // key -> nav <a>
 let current = null;         // the variant shown
@@ -173,7 +235,7 @@ function el(tag, attrs, ...kids) {
     else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
     else e.setAttribute(k, v);
   }
-  for (const kid of kids.flat()) if (kid != null) e.append(kid);
+  for (const kid of kids.flat(Infinity)) if (kid != null) e.append(kid);
   return e;
 }
 
@@ -210,6 +272,15 @@ function treeItem(label, href, title, kids, cls) {
 function navItem(v) {
   const {li, a} = treeItem(shortName(v), "#" + encodeURIComponent(v.key), v.name, v.children.map(navItem));
   li.dataset.name = v.name.toLowerCase();
+  if (DIFF) {
+    li.dataset.status = v.status;
+    a.title = v.name + " — " + v.status;
+    const row = li.querySelector(":scope > .row");
+    const tog = row.querySelector("span.tog");
+    if (tog) { tog.classList.add("dotted"); tog.append(el("span", {class: "dot st-" + v.status})); }
+    const count = row.querySelector(".count");
+    if (count) count.classList.add("c-" + v.status);
+  }
   links.set(v.key, a);
   // An item with variants is a folder: its name opens and closes it.
   if (v.children.length) a.addEventListener("click", e => { e.preventDefault(); toggle(li); });
@@ -232,9 +303,18 @@ function buildNav() {
   document.getElementById("title").textContent = DATA.title;
   document.title = DATA.title;
   const count = [...byKey.values()].filter(e => !e.v.children.length).length;
-  document.getElementById("sub").textContent =
-    `${DATA.icds.length} ICD${DATA.icds.length === 1 ? "" : "s"} · ${count} variants · ${DATA.dialect} dialect`;
+  document.getElementById("sub").textContent = DIFF
+    ? `diff · ${count} variants · ${DATA.dialect} dialect`
+    : `${DATA.icds.length} ICD${DATA.icds.length === 1 ? "" : "s"} · ${count} variants · ${DATA.dialect} dialect`;
   const tree = document.getElementById("tree");
+  if (DIFF) {
+    const changed = count - DIFF.counts.unchanged;
+    const a = el("a", {class: "summary", href: "#summary"}, "Summary",
+      el("span", {class: "count", text: `${changed} changed`}));
+    links.set("summary", a);
+    const box = el("input", {type: "checkbox", checked: "", onchange: e => { onlyChanged = e.target.checked; refilter(); }});
+    tree.append(el("div", {class: "tree"}, a), el("label", {class: "only"}, box, "Changed variants only"));
+  }
   const icds = DATA.icds.map(icd => {
     const label = icd.label || icd.namespace || "ICD";
     const {li, a} = treeItem(label, "#", icd.namespace, icd.messages.map(navItem), "icd");
@@ -245,7 +325,13 @@ function buildNav() {
   });
   tree.append(el("ul", {class: "tree"}, icds));
   themeSwitch();
-  document.getElementById("filter").addEventListener("input", e => filter(e.target.value.trim().toLowerCase()));
+  document.getElementById("filter").addEventListener("input", refilter);
+  refilter();
+}
+
+let onlyChanged = true;  // diff page: hide unchanged variants
+function refilter() {
+  filter(document.getElementById("filter").value.trim().toLowerCase());
 }
 
 function themeSwitch() {
@@ -267,18 +353,23 @@ function filter(text) {
   const visit = li => {
     const kids = [...li.querySelectorAll(":scope > ul > li")];
     const kidHit = kids.map(visit).some(Boolean);
-    const hit = !text || li.dataset.name.includes(text) || kidHit;
+    const unchanged = DIFF && onlyChanged && li.dataset.status === "unchanged";
+    const hit = !unchanged && (!text || li.dataset.name.includes(text) || kidHit);
     li.classList.toggle("hidden", !hit);
     if (text && kidHit) toggle(li, true);
     return hit;
   };
-  document.querySelectorAll(".tree > li.icd > ul > li").forEach(visit);
+  document.querySelectorAll(".tree > li.icd").forEach(icd => {
+    const hits = [...icd.querySelectorAll(":scope > ul > li")].map(visit);
+    icd.classList.toggle("hidden", !hits.some(Boolean));
+  });
 }
 
 function reveal(key) {
-  links.forEach(a => a.parentElement.classList.remove("on"));
+  links.forEach(a => (a.classList.contains("summary") ? a : a.parentElement).classList.remove("on"));
   const a = links.get(key);
   if (!a) return;
+  if (a.classList.contains("summary")) { a.classList.add("on"); return; }
   a.parentElement.classList.add("on");
   for (let li = a.closest("li"); li; li = li.parentElement.closest("li")) toggle(li, true);
   a.scrollIntoView({block: "nearest"});
@@ -290,6 +381,7 @@ function show(key) {
   const entry = byKey.get(key);
   const main = document.getElementById("main");
   main.replaceChildren();
+  if (DIFF && key === "summary") { reveal(key); summaryPage(main); return; }
   if (!entry) { main.append(el("p", {class: "empty", text: "Pick a message."})); return; }
   const {v, icd} = entry;
   current = v;
@@ -300,14 +392,18 @@ function show(key) {
   main.append(el("div", {class: "crumbs"},
     el("span", {text: (icd.label || icd.namespace || "ICD") + " · "}),
     chain.flatMap(p => [el("a", {href: "#" + encodeURIComponent(p.key), text: shortName(p)}), " / "])));
-  main.append(el("h2", {text: v.name}));
+  main.append(el("h2", {}, v.name, DIFF ? [" ", badge(v.status)] : null));
   if (v.children.length) { variantIndex(main, v); return; }
+  const sized = DIFF && v.old_size && v.old_size !== v.size
+    ? [el("del", {text: v.old_size}), " ", v.size] : v.size;
   main.append(el("div", {class: "facts"},
-    el("span", {}, "size ", el("b", {text: v.size})),
+    el("span", {}, "size ", el("b", {}, sized)),
     el("span", {}, "id ", el("b", {class: "mono", text: "(" + v.id + ")"})),
     el("span", {}, "words ", el("b", {text: v.word_bits + " bits"}))));
-  if (v.label) main.append(el("p", {class: "doc", text: v.label}));
-  if (v.description) main.append(el("p", {class: "doc", text: v.description}));
+  const was = v.was || {};
+  if (v.label || was.label) main.append(el("p", {class: "doc"}, changed(was, "label", v.label)));
+  if (v.description || was.description) main.append(el("p", {class: "doc"}, changed(was, "description", v.description)));
+  if (DIFF) diffNotes(main, v);
   if (v.consts.length) {
     main.append(el("div", {class: "chips"},
       v.consts.map(([path, value]) => el("span", {class: "chip fixed", title: "fixed in this variant",
@@ -329,9 +425,106 @@ function show(key) {
     }})));
   draw();
   main.append(host);
-  main.append(el("h3", {text: "Bit map"}));
-  main.append(bitMap(v));
+  const tiles = rows => rows.map(([r, i]) => [r, i]).filter(([r]) => r.map && r.kind !== "group");
+  const all = v.rows.map((r, i) => [r, i]);
+  if (DIFF && v.rows.some(r => r.change === "added" || r.change === "removed" || layoutChanged(r))) {
+    main.append(el("h3", {text: "Bit map — new"}));
+    main.append(bitMap(v.word_bits, tiles(all.filter(([r]) => r.change !== "removed"))));
+    main.append(el("h3", {text: "Bit map — old"}));
+    main.append(bitMap(v.word_bits, tiles(all.filter(([r]) => r.change !== "added")
+      .map(([r, i]) => [Object.assign({}, r, r.was, {old: true}), i]))));
+  } else {
+    main.append(el("h3", {text: "Bit map"}));
+    main.append(bitMap(v.word_bits, tiles(all)));
+  }
   main.scrollTop = 0;
+}
+
+// --- diff pages --------------------------------------------------------------
+
+const MEANS = {
+  incompatible: "old bits moved: a field moved, resized, removed or retyped, a field ahead of others, a variant removed, a shorter message",
+  compatible: "the old layout still reads the same: fields in spare bits or at the end, new variants, cases or named values, renames, defaults",
+  editorial: "only labels and descriptions changed",
+  unchanged: "no changes",
+};
+
+function badge(status) {
+  return el("span", {class: "st st-" + status, text: status});
+}
+
+function changed(was, field, now) {
+  return field in was && was[field] !== now
+    ? [was[field] != null ? el("del", {text: String(was[field])}) : null, was[field] != null && now != null ? " " : null,
+       now != null ? el("ins", {text: String(now)}) : null]
+    : now;
+}
+
+function layoutChanged(r) {
+  return r.was && ("offset" in r.was || "bits" in r.was);
+}
+
+function summaryPage(main) {
+  current = null;
+  const all = DATA.icds.flatMap(icd => icd.messages.flatMap(leaves));
+  main.append(el("div", {class: "crumbs", text: "Diff"}));
+  main.append(el("h2", {text: "Summary"}));
+  main.append(el("div", {class: "facts"},
+    el("span", {}, "old ", el("b", {class: "mono", text: DIFF.old})),
+    el("span", {}, "new ", el("b", {class: "mono", text: DIFF.new})),
+    el("span", {}, el("b", {text: String(all.length)}), " variants")));
+  const shown = new Set(SEVERITY.filter(c => c !== "unchanged"));
+  const tiles = el("div", {class: "tiles"});
+  const host = el("div");
+  const draw = () => {
+    tiles.querySelectorAll(".tile").forEach(t => t.setAttribute("aria-pressed", String(shown.has(t.value))));
+    host.replaceChildren(summaryTable(all.filter(v => shown.has(v.status))));
+  };
+  for (const c of SEVERITY) {
+    tiles.append(el("button", {type: "button", class: "tile st-" + c, value: c, title: "Show or hide " + c,
+      onclick: () => { shown.has(c) ? shown.delete(c) : shown.add(c); draw(); }},
+      el("b", {text: String(DIFF.counts[c])}), c));
+  }
+  main.append(tiles);
+  main.append(el("dl", {class: "legend"}, SEVERITY.slice(0, 3).map(c =>
+    el("div", {}, el("dt", {}, badge(c)), " ", el("dd", {text: MEANS[c]})))));
+  draw();
+  main.append(host);
+  main.scrollTop = 0;
+}
+
+function summaryTable(variants) {
+  if (!variants.length) return el("p", {class: "note", text: "No variants in the chosen categories."});
+  const order = v => SEVERITY.indexOf(v.status);
+  const sorted = variants.map((v, k) => [v, k]).sort(([a, i], [b, j]) => order(a) - order(b) || i - j).map(([v]) => v);
+  return el("table", {class: "summary"},
+    el("thead", {}, el("tr", {}, el("th", {text: "variant"}), el("th", {text: "category"}), el("th", {text: "changes"}))),
+    el("tbody", {}, sorted.map(v => el("tr", {},
+      el("td", {class: "msg"}, el("a", {href: "#" + encodeURIComponent(v.key), text: v.key})),
+      el("td", {}, badge(v.status)),
+      el("td", {}, v.changes.length ? changeList(v, false) : el("span", {class: "note", text: "—"}))))));
+}
+
+function changeList(v, clickable) {
+  return el("ul", {class: clickable ? "changes" : null}, v.changes.map(c => el("li", {
+      title: c.category, onclick: clickable && c.row != null ? () => hilite(c.row) : null},
+    el("span", {class: "dot st-" + c.category}), el("span", {class: "change-text", text: c.text}))));
+}
+
+function diffNotes(main, v) {
+  const whole = v.changes.find(c => c.what === "variant added" || c.what === "variant removed");
+  if (whole) {
+    main.append(el("div", {class: "banner st-" + whole.category},
+      whole.what === "variant added" ? "New in " + DIFF.new + "." : "Removed: only in " + DIFF.old + "."));
+  }
+  main.append(el("h3", {text: v.changes.length ? `Changes (${v.changes.length})` : "Changes"}));
+  main.append(v.changes.length ? changeList(v, true) : el("p", {class: "note", text: "No changes."}));
+  if (v.rows.some(r => r.change)) {
+    main.append(el("p", {class: "legend keys"},
+      el("span", {class: "d-added"}, el("span", {class: "mark", text: "+"}), "added"),
+      el("span", {class: "d-removed"}, el("span", {class: "mark", text: "−"}), "removed"),
+      el("span", {class: "d-changed"}, el("span", {class: "mark", text: "~"}), "changed: ", el("del", {text: "old"}), " new")));
+  }
 }
 
 // A message (or variant) that splits further isn't a layout of its own: list
@@ -345,6 +538,7 @@ function variantIndex(main, v) {
   if (v.description) main.append(el("p", {class: "doc", text: v.description}));
   main.append(el("h3", {text: `Variants (${found.length})`}));
   main.append(el("ul", {class: "index"}, found.map(c => el("li", {},
+    DIFF ? [badge(c.status), " "] : null,
     el("a", {href: "#" + encodeURIComponent(c.key), text: c.name.slice(v.name.length + 1)}),
     c.label ? el("span", {class: "note", text: " — " + c.label}) : null))));
   main.scrollTop = 0;
@@ -370,9 +564,8 @@ function hue(name) {
   return h;
 }
 
-function bitMap(v) {
-  const W = v.word_bits;
-  const tiles = v.rows.map((r, i) => [r, i]).filter(([r]) => r.map && r.kind !== "group");
+// `tiles`: [row, index] pairs of the rows that tile the message, in order.
+function bitMap(W, tiles) {
   // Segments up to the first field whose size or offset isn't known.
   const segs = [];
   let end = 0, open = false;
@@ -403,7 +596,8 @@ function bitMap(v) {
       const label = spare ? "spare" : s.r.kind === "union" ? s.r.name + " (union)" : s.r.name;
       const path = s.r.path || s.r.name;
       const seg = el("div", {
-        class: "seg" + (spare ? " spare" : "") + (s.to == null ? " more" : ""),
+        class: "seg" + (spare ? " spare" : "") + (s.to == null ? " more" : "") +
+          (s.r.change && !(s.r.change === "changed" && !layoutChanged(s.r)) ? " d-" + s.r.change : ""),
         style: `grid-column:${a - lo + 2}/${b - lo + 2};` +
           (spare || s.to == null ? "" : `background:hsl(${hue(label)} 60% 78%)`),
         title: `${spare ? label : path}: ${s.r.type}, ${s.r.size}` + (s.r.offset != null ? ` at ${place(s.r, W)}` : ""),
@@ -436,11 +630,13 @@ function fieldTable(v, redraw) {
   // A nestContents="false" container has no column: skip its (hidden) row.
   // A collapsed container is one row: skip what's inside it.
   const index = [], inside = new Set();  // collapsed containers
+  const touched = new Set();  // collapsed containers with changes inside (diff page)
   let shut = null;
   rowFor.clear();
   v.rows.forEach((r, i) => {
     if (shut !== null && r.depth > v.rows[shut].depth) {
       rowFor.set(i, shut);
+      if (r.change) touched.add(shut);
       return;
     }
     shut = null;
@@ -483,6 +679,7 @@ function fieldTable(v, redraw) {
     const prev = fields[k - 1];
     const same = prev && prev.scope === f.scope && !f.starts.some(j => rows[j].kind === "case") &&
       !inside.has(index[f.i]) && !inside.has(index[prev.i]) &&  // a collapsed row has its own word
+      !moved(rows[f.i]) && !moved(rows[prev.i]) &&  // so does an added, removed or moved one
       rows[prev.i].word === rows[f.i].word && rows[f.i].word !== "—";
     f.word = same ? 0 : 1;
     if (same) { let p = k - 1; while (!fields[p].word) p--; fields[p].word++; }
@@ -491,8 +688,9 @@ function fieldTable(v, redraw) {
   const body = el("tbody");
   for (const f of fields) {
     const r = rows[f.i];
-    const tr = el("tr", {id: "row-" + index[f.i], class: "k-" + r.kind});
-    if (f.word) tr.append(el("td", {class: "word", rowspan: f.word, text: r.word}));
+    const change = r.change || (touched.has(index[f.i]) ? "changed" : null);
+    const tr = el("tr", {id: "row-" + index[f.i], class: "k-" + r.kind + (change ? " d-" + change : "")});
+    if (f.word) tr.append(el("td", {class: "word", rowspan: f.word}, changed(r.was || {}, "word", r.word)));
     const fold = path => () => { collapsed.add(path); redraw(); };
     for (const j of f.starts) tr.append(groupCell(rows[j], span[j], fold(rows[j].path)));
     const spare = r.kind === "spare" || r.kind === "pad";
@@ -506,10 +704,14 @@ function fieldTable(v, redraw) {
       const what = groupWhat(r);
       name = [b, r.name, what && what !== r.name ? el("span", {class: "what", text: what}) : null];
     }
+    const was = r.was || {};
+    if (!folded && "name" in was) name = changed(was, "name", name);
+    const mark = change ? el("span", {class: "mark", title: change,
+      text: {added: "+", removed: "−", changed: "~"}[change]}) : null;
     tr.append(
       el("td", {class: "name", colspan: depth - r.depth + 1},
-        f.starts.filter(j => span[j] === 1).map(j => caption(rows[j])), name),
-      el("td", {class: "bits", text: r.bit_span, title: r.size}),
+        f.starts.filter(j => span[j] === 1).map(j => caption(rows[j])), mark, name),
+      el("td", {class: "bits", title: r.size}, changed(was, "bit_span", r.bit_span)),
       el("td", {class: "type"}, folded ? (r.kind === "array" ? r.type : "") : typeCell(r)),
       el("td", {class: "desc"}, descCell(r)));
     body.append(tr);
@@ -528,6 +730,10 @@ function fieldTable(v, redraw) {
   return table;
 }
 
+function moved(r) {
+  return r.change === "added" || r.change === "removed" || (r.was && "word" in r.was);
+}
+
 function groupWhat(r) {
   return r.kind === "case" ? (r.case_value === "default" ? "default" : "= " + fmt(r.case_value))
     : r.kind === "union" ? r.type
@@ -540,7 +746,8 @@ function groupCell(r, rowspan, onclick) {
   const title = [r.path, r.type, r.label, r.description, "Click to collapse"].filter(Boolean).join("\n");
   // One row has no room for a vertical label: the field's name cell captions it.
   const label = rowspan > 1 ? el("div", {}, r.name, what ? el("span", {class: "what", text: what}) : null) : null;
-  return el("td", {class: "grp k-" + r.kind, rowspan, title, onclick}, label);
+  const change = r.change === "added" || r.change === "removed" ? " d-" + r.change : "";
+  return el("td", {class: "grp k-" + r.kind + change, rowspan, title, onclick}, label);
 }
 
 function caption(r) {
@@ -553,26 +760,34 @@ function typeCell(r) {
     return [on, el("br"), "cases of ", el("a", {href: "#" + encodeURIComponent(r.link), text: of})];
   }
   if (r.link) return el("a", {href: "#" + encodeURIComponent(r.link), text: "message " + r.link});
-  if (r.values.length) {
-    return el("div", {class: "map-vals", title: r.type + (r.restrict ? ", restricted" : "")},
-      r.values.flatMap(([n, val]) => {
+  const was = r.was || {};
+  if (r.values.length || was.values) {
+    // On a diff page, named values that went are struck through and new ones marked.
+    const key = ([n, val]) => n + "\u0000" + val;
+    const before = new Set((was.values || r.values).map(key)), after = new Set(r.values.map(key));
+    const gone = (was.values || []).filter(p => !after.has(key(p)));
+    const vals = el("div", {class: "map-vals", title: r.type + (r.restrict ? ", restricted" : "")},
+      r.values.concat(gone).flatMap(([n, val]) => {
         const on = r.const === val ? " on" : "";
-        return [el("span", {class: "v" + on, text: String(val)}), el("span", {class: on.trim(), text: n})];
+        const d = !after.has(key([n, val])) ? " vals-del" : !before.has(key([n, val])) ? " vals-add" : "";
+        return [el("span", {class: "v" + on + d, text: String(val)}), el("span", {class: (on + d).trim(), text: n})];
       }));
+    return "type" in was ? [el("del", {text: was.type}), vals] : vals;
   }
-  const kids = [r.kind === "pad" ? "implicit spare" : r.type];
+  const kids = [r.kind === "pad" ? "implicit spare" : changed(was, "type", r.type)];
   if (r.const != null) kids.push(el("br"), el("span", {class: "chip fixed fixed-val", text: "= " + fmt(r.const)}));
   return kids;
 }
 
 function descCell(r) {
   const kids = [];
-  if (r.label) kids.push(el("div", {}, el("b", {text: r.label})));
-  if (r.description) kids.push(el("div", {text: r.description}));
+  const was = r.was || {};
+  if (r.label || was.label) kids.push(el("div", {}, el("b", {}, changed(was, "label", r.label))));
+  if (r.description || was.description) kids.push(el("div", {}, changed(was, "description", r.description)));
   if (r.kind === "pad") kids.push(el("div", {class: "note", text: "pads the message to a whole word"}));
   if (r.default != null) {
     const named = r.values.find(([, val]) => val === r.default);
-    kids.push(el("div", {class: "note", text: "default " + (named ? named[0] : r.default)}));
+    kids.push(el("div", {class: "note"}, "default ", changed(was, "default", named ? named[0] : r.default)));
   }
   if (r.const != null && r.values.length) kids.push(el("div", {class: "note", text: "fixed in this variant"}));
   return kids;
@@ -582,7 +797,8 @@ function descCell(r) {
 
 function route() {
   const key = decodeURIComponent(location.hash.slice(1));
-  if (byKey.has(key)) show(key);
+  if (byKey.has(key) || (DIFF && key === "summary")) show(key);
+  else if (DIFF) show("summary");
   else if (DATA.icds.length && DATA.icds[0].messages.length) show(leaves(DATA.icds[0].messages[0])[0].key);
 }
 

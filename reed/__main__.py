@@ -1,4 +1,5 @@
-"""Command line: `reed check FILE...`, `reed expand FILE...` and `reed html FILE...`."""
+"""Command line: `reed check FILE...`, `reed expand FILE...`, `reed html FILE...` and
+`reed diff OLD NEW`."""
 
 from __future__ import annotations
 
@@ -35,7 +36,16 @@ def main(argv: list[str] | None = None) -> int:
     view.add_argument("-o", "--output", default="icd.html", help="page to write (icd.html)")
     view.add_argument("--title", help="page title (the first file's name)")
 
+    changes = commands.add_parser("diff", help="compare two versions of an ICD, variant by variant")
+    changes.add_argument("old", help="the old ICD XML file (imports are found next to it)")
+    changes.add_argument("new", help="the new ICD XML file")
+    changes.add_argument("--dialect", choices=dialects.NAMES, default="base")
+    changes.add_argument("-o", "--output", default="diff.html", help="page to write (diff.html)")
+    changes.add_argument("--title", help="page title (the new file's name)")
+
     args = parser.parse_args(argv)
+    if args.command == "diff":
+        return run_diff(args)
     if args.command == "expand":
         return run_expand(args)
     if args.command == "html":
@@ -55,6 +65,24 @@ def run_html(args) -> int:
     except (OSError, LoweringError, ExpandError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    print(f"wrote {args.output}")
+    return 0
+
+
+def run_diff(args) -> int:
+    from .diff import diff, summary_lines
+    from .html import diff_page
+
+    dialect = dialects.get(args.dialect)
+    title = args.title or Path(args.new).stem
+    try:
+        tree = diff(dialect.load([args.old]), dialect.load([args.new]), dialect)
+        text = diff_page(tree, dialect, title=title, old=args.old, new=args.new)
+        Path(args.output).write_text(text, encoding="utf-8")
+    except (OSError, LoweringError, ExpandError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print("\n".join(summary_lines(tree)))
     print(f"wrote {args.output}")
     return 0
 

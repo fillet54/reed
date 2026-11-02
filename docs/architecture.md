@@ -109,6 +109,7 @@ A variant is a message with some unions resolved: each chosen union is replaced 
   ```
   A union is split when its discriminator's path matches. Subcommands and system IDs are the same mechanism; a system ID's value is a tuple. A plain `systemId` field with no union keyed on it is not split. A pattern applies to every loaded ICD; an alias prefix (`payload:command/...`) limits it to one.
 - **Replacing a union:** the case's fields go in a group named after the union (`command/power` → `commandBody/{systemId, mode, spare}`); an unnamed union's fields go straight into the parent. The discriminator stays in the layout, fixed: `Message.consts` maps its path in the variant to the value. System ID levels stand alone: `fuel.tanks` gets only its own fields, not `fuel`'s.
+- **Docs:** a variant takes the label and description of the case it chose (on its body's meta), so `command/power` is "Power a unit on or off". The innermost chosen case that has docs wins.
 - **Nesting:** expansion repeats inside each variant (`command/id=5/subid=10`). Two splittable unions side by side nest in field order, giving every combination.
 - **Not expanded:**
   - unions whose discriminator isn't listed (and anything inside them);
@@ -136,6 +137,21 @@ A variant is a message with some unions resolved: each chosen union is replaced 
 - The sidebar is a tree: each ICD, then each message and variant with children, opens and closes with its chevron or its name. Clicking a leaf shows it. Above it, an Auto / Light / Dark switch (saved in the browser's localStorage as `reed-theme`) picks the colour scheme; the palette is paper-ui's.
 - The page uses IBM Plex Sans and Mono (400, 500, 600; Mono 400, 600), embedded as data URIs so the page needs no network (about 400 KB). The fonts are in `reed/fonts/` under the SIL Open Font License 1.1 (`reed/fonts/OFL.txt`).
 - Variants and links are keyed `alias:name` (the namespace when there's no alias). The page template is `reed/viewer.html`; the data goes in as JSON.
+
+### Diff
+`reed diff OLD NEW --dialect example -o diff.html` compares two versions of an ICD (each file plus the imports found next to it) at the expanded level, prints a summary and writes a diff page. `reed.diff.diff(old_icds, new_icds, dialect)` returns the merged variant tree as page data.
+- **Matching:** both versions are expanded, and variants are matched by name, or by id for a renamed case. Each pair of fully expanded variants is compared as `field_rows`, with rows matched by path. Spares are matched by place: scope (the innermost case or array), offset and bits. A field with a new path at the same place and type as one that went is a rename.
+- **Categories** (a variant's status is its worst change, or *unchanged*):
+  - *editorial*: labels and descriptions only, a field's or the variant's own;
+  - *compatible*: the old layout still reads the same. This covers a new field in old spare bits (or the implicit pad), a new field after every old field (not inside an array element: that moves later elements), a new variant or case of an unsplit union, new named values, renamed fields or variants, and changed defaults or `restrict`;
+  - *incompatible*: old bits mean something else. This covers a field moved, resized, removed or retyped, a new field ahead of old ones, a changed fixed discriminator or case value, named values removed or renumbered, a removed variant or case, and a shorter message. A variant that splits in one version but not the other is incompatible too.
+- **Named values of a fixed field** don't count: a new return adds a value to `ReturnNumber`, but in `Return/fault` that field is fixed at `fault`, so the variant is unchanged.
+- **Merged rows:** the new rows in order, each removed old row placed after the new row matching the old row before it. Each row has `change` (`added`, `removed`, `changed` or none) and `was`, the old values of whatever differs. Change texts name fields as the table shows them, without unnested containers (`level`, not `CommandBody/level`).
+- **The page** is the viewer in diff mode (`"diff"` in the page data):
+  - the sidebar marks each variant with a status dot and hides unchanged variants unless you untick "Changed variants only";
+  - the Summary page (`#summary`, where the page opens) counts each category, with tiles that filter a table of changed variants (worst first) and their changes;
+  - a variant page lists its changes (click one to highlight its row) and shows the same field table, with added rows in green, removed rows in red and struck through, and changed rows in amber with the old value struck through beside the new one. A collapsed group with changes inside is marked changed;
+  - when the layout changed, there are two bit maps, new and old, with changed segments outlined.
 
 ### Codec
 `reed/codec.py`: `encode(message, value, icds) -> bytes` and `decode(message, data, icds) -> dict`, using a sequential bit cursor (no precomputed offsets).

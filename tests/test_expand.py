@@ -86,6 +86,25 @@ def test_variant_key_is_its_name_parts():
     assert b.message.name == "m"
 
 
+def test_a_variant_takes_its_cases_docs():
+    root = tree(
+        COMMANDS.replace('discrimValue="1">', 'discrimValue="1"><label>Do a</label><description>All of a</description>'),
+        "m/id",
+    )
+    a, b = root.children
+
+    assert (a.message.body.meta.label, a.message.body.meta.description) == ("Do a", "All of a")
+    assert b.message.body.meta.label is None
+
+
+def test_an_inner_cases_docs_win():
+    body = SUBCOMMANDS.replace('<command name="a" discrimValue="5">', '<command name="a" discrimValue="5"><label>A</label>')
+    root = tree(body, "m/id", "m/body/*/subid")
+
+    assert find(root, "m/a").message.body.meta.label == "A"
+    assert find(root, "m/a/x").message.body.meta.label == "A"  # x has none of its own
+
+
 def test_unlisted_union_is_not_split():
     root = tree(COMMANDS)
 
