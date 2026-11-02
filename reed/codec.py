@@ -8,8 +8,9 @@ Values mirror the message:
 - hexdata is `bytes` (a bytearray is fine too), exactly its size; a variable
   one's count field is filled in from its length;
 - a string is a str, one Latin-1 byte per character;
-- a union is `{case_name: case_value}`; an unnamed union's case name appears
-  directly in the enclosing dict;
+- a union is `{case_name: case_value}`;
+- a group or union with nestContents="false" (and an unnamed union) has no
+  key of its own: its fields, or its case, go in the enclosing dict;
 - an array is a list of element dicts;
 - a carried message (MessageRef) is a dict of that message's fields.
 
@@ -32,7 +33,7 @@ from __future__ import annotations
 import struct
 from collections.abc import Mapping
 
-from .ir import DEFAULT, STRING_LENGTH_BITS, VARIABLE, Array, Bytes, Float, Icd, Int, String, LayoutPolicy, Message, MessageRef, Scaled, Spare, Struct, Union
+from .ir import DEFAULT, STRING_LENGTH_BITS, VARIABLE, Array, Bytes, Float, Icd, Int, String, LayoutPolicy, Message, MessageRef, Scaled, Spare, Struct, Union, flattened, value_keys
 from .paths import Frame, Stack, children, field_path, push, resolve
 from .size import find_message, layout_of
 
@@ -124,11 +125,13 @@ class _Encoder:
             node = child.node
             if isinstance(node, Spare):
                 self.collect(push(stack, child), 0)
-            elif isinstance(node, Union) and not node.name:
-                names = [c.name for c in node.cases]
-                known.update(names)
-                chosen = {k: value[k] for k in names if k in value}
-                self.collect(push(stack, child), chosen if chosen else MISSING)
+            elif flattened(node):
+                keys = value_keys(node)
+                known.update(keys)
+                chosen = {k: value[k] for k in keys if k in value}
+                if isinstance(node, Union) and not chosen:
+                    chosen = MISSING
+                self.collect(push(stack, child), chosen)
             else:
                 known.add(node.name)
                 self.collect(push(stack, child), value.get(node.name, MISSING))
@@ -459,7 +462,7 @@ class _Decoder:
             node = child.node
             if value is MISSING:
                 continue
-            if isinstance(node, Union) and not node.name:
+            if flattened(node):
                 result.update(value)
             else:
                 result[node.name] = value

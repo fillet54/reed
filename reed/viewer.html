@@ -391,7 +391,9 @@ const CONTAINERS = new Set(["group", "union", "case", "array"]);
 // Groups, unions, cases and arrays become columns spanning the rows of their
 // fields, with vertical labels that stay in view; fields are rows.
 function fieldTable(v) {
-  const rows = v.rows;
+  // A nestContents="false" container has no column: skip its (hidden) row.
+  const index = v.rows.map((r, i) => i).filter(i => !v.rows[i].hidden);
+  const rows = index.map(i => v.rows[i]);
   // How many field rows each container spans; an empty container is a field.
   const span = rows.map(() => 0);
   const leaf = rows.map((r, i) => !CONTAINERS.has(r.kind) ||
@@ -424,7 +426,7 @@ function fieldTable(v) {
   const body = el("tbody");
   for (const f of fields) {
     const r = rows[f.i];
-    const tr = el("tr", {id: "row-" + f.i, class: "k-" + r.kind});
+    const tr = el("tr", {id: "row-" + index[f.i], class: "k-" + r.kind});
     if (f.word) tr.append(el("td", {class: "word", rowspan: f.word, text: r.word}));
     for (const j of f.starts) tr.append(groupCell(rows[j], span[j]));
     const spare = r.kind === "spare" || r.kind === "pad";

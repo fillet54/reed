@@ -85,6 +85,7 @@ class _Rows:
             "description": None,
             "case_value": None,
             "link": None,
+            "hidden": False,  # nestContents="false": no group in the table
         }
         row.update(extra)
         self.rows.append(row)
@@ -118,14 +119,19 @@ class _Rows:
             self.add(name or "(spare)", kind, _type(node), *args, tiles, **extra)
 
         elif isinstance(node, Struct):
-            row = self.add(name or "(group)", "group", "group", *args, tiles, **docs)
+            hidden = not node.nest
+            row = self.add(name or "(group)", "group", "group", *args, tiles, hidden=hidden, **docs)
             if isinstance(row["const"], list):  # a system ID: one value per field
                 for field, value in zip(node.fields, row["const"]):
                     self.consts.setdefault("/".join(here + (field.name,)), value)
-            self.fields(stack, depth + 1, offset, here, relative, tiles)
+            self.fields(stack, depth + (not hidden), offset, here, relative, tiles)
 
         elif isinstance(node, Union):
-            self.add(name or "(union)", "union", f"union on {node.discrim}", *args, tiles, **docs)
+            hidden = not node.nest
+            self.add(
+                name or "(union)", "union", f"union on {node.discrim}", *args, tiles, hidden=hidden, **docs
+            )
+            depth -= hidden  # its cases sit where it would
             for case, frame in zip(node.cases, children(stack[-1])):
                 case_stack = push(stack, frame)
                 case_size = self.sizer.size(case_stack)
@@ -134,7 +140,7 @@ class _Rows:
                 self.add(
                     case.name,
                     "case",
-                    f"= {value}" if case.value is not DEFAULT else "default case",
+                    f"= {_show(case.value)}" if case.value is not DEFAULT else "default case",
                     depth + 1,
                     offset,
                     case_size.lo if case_size.is_fixed else None,
@@ -176,8 +182,9 @@ class _Rows:
 def word_span(offset, bits, word_bits: int, relative: bool = False) -> tuple[str, str]:
     """The words a field covers and its bits in them, numbered MSB first.
 
-    A 4-bit field at the start of a 16-bit word is ("0", "15–12"); a 32-bit one
-    is ("2–3", "15–0"). An unknown end is "…", an unknown offset (or no bits)
+    Bits are numbered across all the words the field covers. A 4-bit field at
+    the start of a 16-bit word is ("0", "15–12"); a 32-bit one is ("2–3",
+    "31–0"); 16 bits from the middle of word 4 are ("4–5", "23–8"). An unknown end is "…", an unknown offset (or no bits)
     "—", and an offset relative to an array element has a "+".
     """
     if offset is None:
@@ -189,8 +196,9 @@ def word_span(offset, bits, word_bits: int, relative: bool = False) -> tuple[str
         return f"{sign}{first}–…", f"{hi}–…"
     if bits == 0:
         return f"{sign}{first}", "—"
-    last, end = divmod(offset + bits - 1, word_bits)
-    lo = word_bits - 1 - end
+    last = (offset + bits - 1) // word_bits
+    top = (last - first + 1) * word_bits - 1  # the MSB of the words covered
+    hi, lo = top - start, top - (start + bits - 1)
     words = f"{sign}{first}" if last == first else f"{sign}{first}–{last}"
     return words, str(hi) if hi == lo and bits == 1 else f"{hi}–{lo}"
 

@@ -20,7 +20,23 @@ import struct
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
-from .ir import VARIABLE, Array, Bytes, Case, Domain, Float, Icd, Int, Message, Scaled, String, Struct, Union
+from .ir import (
+    VARIABLE,
+    Array,
+    Bytes,
+    Case,
+    Domain,
+    Float,
+    Icd,
+    Int,
+    Message,
+    Scaled,
+    String,
+    Struct,
+    Union,
+    flattened,
+    value_keys,
+)
 from .issues import Issue
 from .paths import Frame, Stack, children, is_before, push, resolve, root_stack
 from .size import Size, Sizer
@@ -201,6 +217,26 @@ def duplicate_case_values(node, ctx):
             )
 
 
+@rule(Struct)
+def duplicate_value_key(node, ctx):
+    """Two fields that would share a key in the group's value dict.
+
+    Fields of a group or union with nestContents="false" (or an unnamed union's
+    cases) go in the enclosing dict, so their names can clash with its fields.
+    """
+    if flattened(node):
+        return  # its fields are checked with the group that holds them
+    seen: set[str] = set()
+    for key in (k for f in node.fields for k in value_keys(f)):
+        if key in seen and ctx.once("duplicate-value-key", id(node), key):
+            yield ctx.error(
+                "duplicate-value-key",
+                f"two fields would both be {key!r} in this group's value "
+                '(fields of nestContents="false" groups and unions go in the enclosing group)',
+            )
+        seen.add(key)
+
+
 @rule(Array)
 def count_field(node, ctx):
     target = yield from _check_path(ctx, node.count, "countValue")
@@ -323,6 +359,7 @@ BASE_RULES: tuple[Rule, ...] = (
     declared_bit_count,
     discriminator,
     duplicate_case_values,
+    duplicate_value_key,
     count_field,
     byte_count_field,
     duplicate_domain_values,

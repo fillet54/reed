@@ -172,6 +172,7 @@ class Struct:
     declared_bits: int | _Variable | None = None  # checked against the computed size
     domain: tuple[Domain, ...] = ()  # allowed values when the struct is an ID
     meta: Meta = field(default_factory=Meta)
+    nest: bool = True  # nestContents="false": the fields go in the enclosing value
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +190,7 @@ class Union:
     discrim: Path
     cases: tuple[Case, ...]
     meta: Meta = field(default_factory=Meta)
+    nest: bool = True  # nestContents="false" (or no name): the case goes in the enclosing value
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,3 +236,26 @@ class Icd:
     alias: str = ""  # its prefix, e.g. "example" (refs, and <example:command> instances)
     layout: LayoutPolicy = LayoutPolicy()
     issues: tuple[Issue, ...] = ()  # warnings found while lowering
+
+
+def flattened(node) -> bool:
+    """Whether a field's contents go straight into the enclosing group's value.
+
+    True for a group or union with nestContents="false", and for an unnamed
+    union. It shapes values (and the viewer), not paths: a discrimField still
+    names the group.
+    """
+    if isinstance(node, Union):
+        return not node.nest or not node.name
+    return isinstance(node, Struct) and not node.nest
+
+
+def value_keys(node) -> tuple[str, ...]:
+    """The keys a field gives its enclosing group's value dict."""
+    if isinstance(node, Spare):
+        return ()
+    if isinstance(node, Union) and flattened(node):
+        return tuple(case.name for case in node.cases)
+    if isinstance(node, Struct) and flattened(node):
+        return tuple(key for f in node.fields for key in value_keys(f))
+    return (node.name,)

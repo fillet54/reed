@@ -471,6 +471,24 @@ class Lowering:
 
     def field(self, elem: ET.Element) -> Node:
         with _at(elem):
+            node = self.lower_field(elem)
+            if elem.get("nestContents") is None:
+                return node
+            nest = self.flag(elem, "nestContents")
+            if isinstance(node, (Struct, Union)):
+                return node if node.nest == nest else replace(node, nest=nest)
+            if nest:
+                return node
+            if isinstance(node, Array):
+                raise LoweringError(
+                    f'{_describe(elem)}: nestContents="false" on an array; '
+                    "an array always nests (its value is a list)"
+                )
+            raise LoweringError(f"{_describe(elem)}: nestContents only applies to groups and unions")
+
+    def lower_field(self, elem: ET.Element) -> Node:
+        """`elem` as a node, by its xsi:type, ref or tag."""
+        with _at(elem):
             xsi_type = elem.get(XSI_TYPE)
             if xsi_type:  # on a ref too: never silently ignored
                 method = getattr(self, f"lower_type_{xsi_type}", None)

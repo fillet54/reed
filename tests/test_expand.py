@@ -350,3 +350,19 @@ def test_plain_system_id_field_is_not_split():
     power = find(example_tree()["Command"], "Command/power")
 
     assert power.children == ()
+
+
+def test_a_variant_of_an_unnested_union_stays_unnested():
+    variant = find(
+        tree(
+            '<integer name="id" bitCount="8"/>'
+            '<union name="body" discrimField="../id" nestContents="false">'
+            '<command name="a" discrimValue="1"><integer name="x" bitCount="8"/></command>'
+            "</union>",
+            "m/id",
+        ),
+        "m/a",
+    )
+
+    body = variant.message.body.fields[1]
+    assert isinstance(body, Struct) and body.name == "body" and not body.nest

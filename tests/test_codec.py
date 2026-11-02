@@ -580,7 +580,7 @@ def test_example_power_command():
     messages, icds = example()
     value = {
         "header": {"key": 7, "time": 360000},
-        "CommandBody": {"power": {"systemId": RCS_QUAD_B, "mode": "ON"}},
+        "power": {"systemId": RCS_QUAD_B, "mode": "ON"},  # CommandBody doesn't nest
     }
 
     data = encode(messages["Command"], value, icds)
@@ -590,7 +590,7 @@ def test_example_power_command():
     assert data.hex() == "0001" "0007" "00057e40" "06041400"
     assert decode(messages["Command"], data, icds) == {
         "header": {"CommandNumber": "power", "key": 7, "time": 360000},
-        "CommandBody": {"power": {"systemId": RCS_QUAD_B, "mode": "ON"}},
+        "power": {"systemId": RCS_QUAD_B, "mode": "ON"},
     }
 
 
@@ -598,12 +598,10 @@ def test_example_test_command_carries_a_test_icd_message():
     messages, icds = example()
     value = {
         "header": {"key": 1, "time": 0},
-        "CommandBody": {
-            "TestCommand": {
-                "TestCommandBody": {
-                    "header": {"TestNumber": "memoryCheck"},
-                    "TestCommandBody": {"memoryCheck": {"startAddress": 0o4000, "wordCount": 64}},
-                }
+        "TestCommand": {
+            "TestCommandBody": {  # the carried message; its own TestCommandBody union doesn't nest
+                "header": {"TestNumber": "memoryCheck"},
+                "memoryCheck": {"startAddress": 0o4000, "wordCount": 64},
             }
         },
     }
@@ -621,16 +619,14 @@ def test_example_stored_command():
     messages, icds = example()
     value = {
         "header": {"key": 2, "time": 0},
-        "CommandBody": {
-            "storeAp": {
-                "executeAt": 100,
-                "stored": {"gimbalTrim": {"pitch": 1.5, "yaw": -0.5}},
-            }
+        "storeAp": {
+            "executeAt": 100,
+            "stored": {"gimbalTrim": {"pitch": 1.5, "yaw": -0.5}},
         },
     }
 
     data = encode(messages["Command"], value, icds)
-    stored = decode(messages["Command"], data, icds)["CommandBody"]["storeAp"]
+    stored = decode(messages["Command"], data, icds)["storeAp"]
 
     assert data.hex() == "0004" "0002" "00000000" "0002" "00000064" "3fc00000" "bf000000"
     assert stored == {
@@ -753,3 +749,54 @@ def test_variable_hexdata_count_must_agree():
 
 def test_empty_variable_hexdata():
     assert roundtrip(VARIABLE_HEX, {"n": 0, "raw": b""}) == bytes.fromhex("0000")
+
+
+# --- nestContents -------------------------------------------------------------
+
+
+def test_an_unnested_group_puts_its_fields_in_the_enclosing_dict():
+    data = roundtrip(
+        '<integer name="a" bitCount="8"/>'
+        '<group name="g" nestContents="false"><integer name="b" bitCount="8"/></group>',
+        {"a": 1, "b": 2},
+    )
+
+    assert data == bytes.fromhex("0102")
+
+
+def test_an_unnested_union_puts_its_case_in_the_enclosing_dict():
+    body = (
+        '<integer name="id" bitCount="8"/>'
+        '<union name="body" discrimField="../id" nestContents="false">'
+        '<command name="a" discrimValue="1"><integer name="x" bitCount="8"/></command>'
+        '<command name="b" discrimValue="2"><integer name="y" bitCount="8"/></command>'
+        "</union>"
+    )
+
+    assert roundtrip(body, {"id": 2, "b": {"y": 7}}) == bytes.fromhex("0207")
+
+
+def test_unnested_contents_nest_inside_named_groups():
+    roundtrip(
+        '<group name="outer"><group name="inner" nestContents="false">'
+        '<integer name="x" bitCount="16"/></group></group>',
+        {"outer": {"x": 5}},
+    )
+
+
+def test_an_unnested_group_name_is_not_a_key():
+    msg, icds = message('<group name="g" nestContents="false"><integer name="b" bitCount="16"/></group>')
+
+    with pytest.raises(CodecError, match="unknown field 'g'"):
+        encode(msg, {"g": {"b": 1}}, icds)
+
+
+def test_example_command_body_is_not_nested():
+    icds = EXAMPLE.load(["tests/data/example-icd.xml"])
+    command = next(m for m in icds["http://example.com/example-icd"].messages if m.name == "Command")
+    value = {
+        "header": {"CommandNumber": "spsBurn", "key": 9, "time": 100},
+        "spsBurn": {"ignitionTime": 5, "deltaV": 1.5, "burnDuration": 2.0},
+    }
+
+    assert decode(command, encode(command, value, icds), icds) == value

@@ -81,7 +81,7 @@
 
   <message name="Command">
     <group name="header" ref="commandHeader" />
-    <union name="CommandBody" discrimField="../header/CommandNumber">
+    <union name="CommandBody" discrimField="../header/CommandNumber" nestContents="false">
       <command name="power" discrimValue="1">
         <label>Power a unit on or off</label>
         <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef" />
@@ -144,13 +144,13 @@
 
   <message name="Return">
     <group name="header" ref="returnHeader" />
-    <union name="ReturnBody" discrimField="../header/ReturnNumber">
+    <union name="ReturnBody" discrimField="../header/ReturnNumber" nestContents="false">
       <return name="status" discrimValue="1">
         <group name="systemId" ref="SubsystemType" xsi:type="subsystemIDRef" />
         <spare bitCount="11" />
-        <union name="detail" discrimField="../systemId" xsi:type="subsystemRef">
+        <union name="detail" discrimField="../systemId" xsi:type="subsystemRef" nestContents="false">
           <system name="GNC">
-            <group name="summary">
+            <group name="summary" nestContents="false">
               <integer name="alarmCount" bitCount="16" />
             </group>
             <subsystem name="IMU">

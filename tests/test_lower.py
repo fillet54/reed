@@ -1212,3 +1212,47 @@ def test_lone_spare_without_discrim_value_is_the_default_case_with_a_warning():
 def test_spare_without_discrim_value_next_to_another_spare_is_an_error():
     with pytest.raises(LoweringError, match="missing required attribute 'discrimValue' on <spare>"):
         spare_union('<spare discrimValue="1" bitCount="8"/><spare bitCount="8"/>')
+
+
+# --- nestContents -------------------------------------------------------------
+
+
+def test_groups_and_unions_nest_by_default():
+    group, union = lower_fields(
+        '<group name="g"><integer name="x" bitCount="8"/></group>'
+        '<union name="u" discrimField="../g/x"><spare discrimValue="default" bitCount="8"/></union>'
+    )
+
+    assert group.nest and union.nest
+
+
+def test_nest_contents_false():
+    group, union = lower_fields(
+        '<group name="g" nestContents="false"><integer name="x" bitCount="8"/></group>'
+        '<union name="u" discrimField="../g/x" nestContents="false">'
+        '<spare discrimValue="default" bitCount="8"/></union>'
+    )
+
+    assert not group.nest and not union.nest
+
+
+def test_nest_contents_can_be_set_where_a_group_def_is_used():
+    field = lower_field(
+        '<group name="h" ref="hdr" nestContents="false"/>',
+        defs='<group id="hdr"><integer name="x" bitCount="8"/></group>',
+    )
+
+    assert not field.nest
+
+
+def test_nest_contents_must_be_true_or_false():
+    with pytest.raises(LoweringError, match="nestContents must be true or false"):
+        lower_fields('<group name="g" nestContents="no"><integer name="x" bitCount="8"/></group>')
+
+
+def test_an_array_always_nests():
+    with pytest.raises(LoweringError, match="nestContents.*array"):
+        lower_fields(
+            '<integer name="n" bitCount="8"/>'
+            '<group name="g" countValue="../n" nestContents="false"><integer name="x" bitCount="8"/></group>'
+        )

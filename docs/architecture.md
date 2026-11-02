@@ -119,12 +119,16 @@ A variant is a message with some unions resolved: each chosen union is replaced 
 - **Errors first:** expansion refuses an ICD with validation errors. Duplicate case values would give two variants one id.
 - A listed pattern that matches no union is a warning.
 
+### nestContents
+`nestContents="true|false"` (default true) on a `<group>` or `<union>`, where it's defined or where a fieldDef is used, sets `Struct.nest` / `Union.nest`. False means the container is only a grouping in the definition: values and the viewer show its contents in the enclosing group. It doesn't change paths, so `discrimField="../header/CommandNumber"` and `Message.consts` still name every group. An array always nests (its value is a list): `nestContents="false"` on one is a lowering error, as it is on any other field. `ir.flattened(node)` and `ir.value_keys(node)` say which containers flatten and which keys they give; validation's `duplicate-value-key` reports two fields that would share a key after flattening. A variant of a split union keeps the union's `nest`.
+
 ### HTML viewer
 - `reed html FILES --dialect example -o icd.html [--title T]` writes one self-contained page (no server, no network): the left side is each ICD's variant tree with a filter box; the right side shows the chosen variant's size, id, fixed discriminators, the field table and a word-by-word bit map. The URL hash names the variant (`#example:Command/power`), so links can be shared.
+- A `nestContents="false"` group or union gets no column in the field table: its fields (or its cases) sit where it would. Its row is still in the data, marked `hidden`, for the bit map.
 - The field table's columns are word, field, bits, type and description:
   - **word**: the 16-bit word number from 0 (`2–3` for a field that spans words); fields in the same word share the cell, except across union cases;
   - **field**: groups, unions, cases and arrays are columns spanning their fields' rows, with vertical labels (`power = 1`, `CommandBody union on ../header/CommandNumber`, `batteries × ../count`) that stay pinned at the top while their rows scroll past. A group with one field has no room for a vertical label, so the field's name carries it as a caption;
-  - **bits**: numbered MSB first, 15 to 0 (`15–12`; `1–11` for a field that runs from bit 1 of one word into the next);
+  - **bits**: numbered MSB first, 15 to 0 in one word, and across all the words a field covers: a 32-bit field in words `2–3` is `31–0`, and 7 bits from bit 1 of word 4 into word 5 are `17–11`;
   - **type**: the type, or for a field with named values the value-to-name mapping, with the value fixed in this variant highlighted;
   - **description**: label, description, default.
 - `reed.html.field_rows(message, icds)` builds the rows: each field's offset, `word` and `bit_span` labels (`word_span()`: `…` for an unknown end, `—` for an unknown offset or no bits, `+` for offsets relative to an array element), size, type, named values, default, docs and fixed value. A system ID's fixed tuple is shown on its group and split over its fields. A union that wasn't split lists every case from the same offset; a carried message is one row linking to its own tree. The last word's implicit spare is a `(pad)` row.
@@ -136,6 +140,7 @@ A variant is a message with some unions resolved: each chosen union is replaced 
 `reed/codec.py`: `encode(message, value, icds) -> bytes` and `decode(message, data, icds) -> dict`, using a sequential bit cursor (no precomputed offsets).
 - **Value shapes:**
   - a group is a dict of its fields, with spares left out;
+  - a group or union with `nestContents="false"` has no key of its own: its fields (or its chosen case) go in the enclosing dict, as an unnamed union's case does. The example ICDs set it on `CommandBody`, `ReturnBody`, `TestCommandBody`, the status `detail` union and the GNC `summary` group, so a command is `{"header": {...}, "power": {...}}`;
   - an integer is an int, or a name from its named values; decoding returns the name when there is one;
   - a scalar is a number, where engineering value = raw × scale + offset;
   - a union is `{case: value}`; an unnamed union's case name appears directly in the enclosing dict;

@@ -27,6 +27,11 @@ def walk(variant):
         yield from walk(child)
 
 
+def shown(rows):
+    """Rows the table draws: a nestContents="false" container's row is hidden."""
+    return [r for r in rows if not r["hidden"]]
+
+
 def brief(rows, *keys):
     return [tuple(r[k] for k in keys) for r in rows]
 
@@ -119,9 +124,9 @@ def test_rows_name_their_word_and_bits_msb_first():
         ("b", "0", "11–0"),
         ("c", "1", "15"),
         ("(spare)", "1", "14–0"),
-        ("d", "2–3", "15–0"),
+        ("d", "2–3", "31–0"),  # numbered across the words it covers
         ("e", "4", "15–8"),
-        ("f", "4–5", "7–8"),
+        ("f", "4–5", "23–8"),
         ("(pad)", "5", "7–0"),
     ]
 
@@ -171,6 +176,28 @@ def test_an_unsplit_union_lists_every_case_from_the_same_offset():
     ]
     assert rows[1]["type"] == "union on ../id"
     assert rows[2]["case_value"] == 1
+
+
+def test_unnested_containers_have_no_row_of_their_own():
+    rows = rows_of(
+        '<group name="g" nestContents="false"><integer name="id" bitCount="8"/></group>'
+        '<union name="body" discrimField="../g/id" nestContents="false">'
+        '<command name="a" discrimValue="1"><integer name="x" bitCount="8"/></command>'
+        "</union>"
+    )
+
+    assert brief(shown(rows), "depth", "name", "kind", "path") == [
+        (0, "id", "integer", "g/id"),
+        (0, "a", "case", "body/a"),
+        (1, "x", "integer", "body/a/x"),
+    ]
+
+
+def test_an_unnested_variant_body_has_no_row():
+    rows = rows_of(UNION.replace('name="body"', 'name="body" nestContents="false"'), "m/id", variant="m/b")
+
+    assert brief(shown(rows), "depth", "name", "kind") == [(0, "id", "integer"), (0, "y", "integer")]
+    assert brief([r for r in rows if r["hidden"]], "name", "kind") == [("body", "group")]
 
 
 def test_a_variant_shows_its_fixed_discriminator():

@@ -346,3 +346,32 @@ def test_hexdata_count_variable_must_come_first():
         '<hexdata name="raw" bitCount="variable" countVariable="../n"/>'
         '<integer name="n" bitCount="8"/>'
     ) == [("error", "used-before-defined", "m/raw")]
+
+
+# --- nestContents -------------------------------------------------------------
+
+
+def test_unnested_names_that_clash_are_an_error():
+    found = issues(
+        '<integer name="x" bitCount="8"/>'
+        '<group name="g" nestContents="false"><integer name="x" bitCount="8"/></group>'
+    )
+
+    assert ("error", "duplicate-value-key", "m") in found
+
+
+def test_unnested_case_names_that_clash_are_an_error():
+    found = issues(
+        '<integer name="a" bitCount="8"/>'
+        '<union name="u" discrimField="../a" nestContents="false">'
+        '<command name="a" discrimValue="1"><integer name="x" bitCount="8"/></command></union>'
+    )
+
+    assert ("error", "duplicate-value-key", "m") in found
+
+
+def test_unnested_names_that_do_not_clash_are_fine():
+    assert issues(
+        '<integer name="x" bitCount="8"/>'
+        '<group name="g" nestContents="false"><integer name="y" bitCount="8"/></group>'
+    ) == []

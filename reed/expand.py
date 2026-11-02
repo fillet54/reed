@@ -21,7 +21,7 @@ inside carried messages are left alone.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from .ir import DEFAULT, Array, Icd, Message, MessageRef, Struct, Union
@@ -153,7 +153,7 @@ class _Build:
 
         if all(a is b for a, b in zip(fields, node.fields)) and len(fields) == len(node.fields):
             return node  # unchanged: share it
-        return Struct(node.name, tuple(fields), node.declared_bits, node.domain, node.meta)
+        return replace(node, fields=tuple(fields))
 
     def union(self, stack: Stack, path: tuple[str, ...]) -> list:
         frame = stack[-1]
@@ -181,7 +181,7 @@ class _Build:
 
         if not union.name:
             return list(fields)
-        return [Struct(union.name, tuple(fields), meta=union.meta)]
+        return [Struct(union.name, tuple(fields), meta=union.meta, nest=union.nest)]
 
 
 # --- validation ---------------------------------------------------------------
