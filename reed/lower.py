@@ -175,6 +175,8 @@ class _Fill:
         if problem:
             raise LoweringError(f"{what}: {problem}", line=line)
         key, union = found
+        # Say whose cases these are: tools may show a link, not every case.
+        node = replace(node, meta=replace(node.meta, props=node.meta.props + ((CASES_OF, key),)))
         if key in active:
             return replace(node, cases=()), active
         return replace(node, cases=union.cases), active | {key}
@@ -225,6 +227,8 @@ class _Fill:
 
 # Meta prop of a union placeholder: (absolute path, what it is, source line).
 CASES_FROM = "cases-from"
+# Set once filled: (namespace, message, path) of the union whose cases it has.
+CASES_OF = "cases-of"
 
 
 def _renamed(node, name: str):

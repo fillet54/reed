@@ -251,6 +251,20 @@ def test_a_carried_message_links_to_its_own_tree():
     assert brief(rows, "name", "kind", "link", "bits") == [("payload", "message", "p", 16)]
 
 
+def test_a_union_with_another_unions_cases_links_to_it():
+    icds = EXAMPLE.load(["tests/data/example-icd.xml"])
+    trees = expand(icds, EXAMPLE)
+    (command,) = [v for v in trees["http://example.com/example-icd"] if v.name == "Command"]
+    store = next(v for v in walk(command) if v.name == "Command/storeAp")
+
+    rows = shown(field_rows(store.message, icds))
+
+    stored = next(r for r in rows if r["name"] == "stored")
+    assert (stored["kind"], stored["link"]) == ("union", "example:Command")
+    assert stored["type"] == "union on ../CommandNumber: cases of Command/CommandBody"
+    assert rows[-1] is stored or rows[rows.index(stored) + 1]["depth"] <= stored["depth"]  # no cases
+
+
 # --- the page ---------------------------------------------------------------
 
 
@@ -271,6 +285,16 @@ def test_page_embeds_every_variant():
     assert command["key"] == "example:Command"
     assert [c["name"] for c in command["children"]][:2] == ["Command/power", "Command/gimbalTrim"]
     assert command["size"] == "80–368 bits (72–368 bits used)"
+
+
+def test_only_fully_expanded_variants_have_rows():
+    icds = EXAMPLE.load(["tests/data/example-icd.xml"])
+    (ret,) = [m for m in embedded(page(icds, EXAMPLE))["icds"][0]["messages"] if m["name"] == "Return"]
+    status = next(c for c in ret["children"] if c["name"] == "Return/status")
+    fault = next(c for c in ret["children"] if c["name"] == "Return/fault")
+
+    assert "rows" not in ret and "rows" not in status  # shown by their variants
+    assert fault["rows"] and status["children"][0]["rows"]
 
 
 def test_page_embeds_ibm_plex_so_it_works_offline():

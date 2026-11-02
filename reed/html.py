@@ -8,8 +8,8 @@ fields have offsets relative to the element; a carried message is one row
 that links to its own tree.
 
 `page(icds, dialect)` expands the ICDs and embeds the trees as JSON in a page
-whose script draws a navigation tree, a word-by-word bit map and the field
-table. The page needs no server or network: open the file.
+whose script draws a navigation tree and, for each fully expanded variant, the
+field table and a word-by-word bit map. The page needs no server or network: open the file.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ from .ir import (
     Struct,
     Union,
 )
+from .lower import CASES_OF
 from .paths import Stack, children, push, root_stack
 from .size import Sizer, describe_size, layout_of
 
@@ -125,6 +126,19 @@ class _Rows:
                 for field, value in zip(node.fields, row["const"]):
                     self.consts.setdefault("/".join(here + (field.name,)), value)
             self.fields(stack, depth + (not hidden), offset, here, relative, tiles)
+
+        elif isinstance(node, Union) and node.meta.prop(CASES_OF):
+            # Another union's cases (an <apCommand>): a link, not every case again.
+            namespace, message, union_path = node.meta.prop(CASES_OF)
+            self.add(
+                name or "(union)",
+                "union",
+                f"union on {node.discrim}: cases of {message}/{union_path}",
+                *args,
+                tiles,
+                link=message_key(self.icds, namespace, message),
+                **docs,
+            )
 
         elif isinstance(node, Union):
             hidden = not node.nest
@@ -302,16 +316,21 @@ def font_faces() -> str:
 
 
 def _variant(variant: Variant, icds, namespace: str) -> dict:
+    """A variant for the page. Only a leaf (fully expanded) has rows and a
+    layout: a parent is shown by its variants."""
     message = variant.message
+    shown = {
+        "consts": [[path, _jsonable(value)] for path, value in message.consts],
+        "word_bits": layout_of(icds, message).word_bits,
+        "rows": field_rows(message, icds),
+    }
     return {
         "key": message_key(icds, namespace, variant.name),
         "name": variant.name,
         "id": ", ".join(_show(v) for v in variant.id),
         "size": describe_size(message, icds),
-        "consts": [[path, _jsonable(value)] for path, value in message.consts],
-        "word_bits": layout_of(icds, message).word_bits,
         "label": message.body.meta.label,
         "description": message.body.meta.description,
-        "rows": field_rows(message, icds),
+        **({} if variant.children else shown),
         "children": [_variant(c, icds, namespace) for c in variant.children],
     }

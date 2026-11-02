@@ -86,7 +86,8 @@ h2 { font-size: 22px; margin: 0 0 4px; word-break: break-word; }
 .chip { border-radius: 999px; padding: 1px 9px; font: 12px var(--mono); background: var(--panel); border: 1px solid var(--line); }
 .chip.fixed { background: var(--fixed-soft); color: var(--fixed); border-color: transparent; }
 h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 26px 0 8px; }
-.kids a { margin-right: 12px; display: inline-block; }
+.index { margin: 0; padding-left: 18px; }
+.index li { margin: 3px 0; }
 
 .map { display: grid; gap: 2px; font: 11px var(--mono); max-width: 980px; }
 .map .w { display: grid; grid-template-columns: 34px repeat(var(--bits), 1fr); gap: 2px; }
@@ -210,10 +211,8 @@ function navItem(v) {
   const {li, a} = treeItem(shortName(v), "#" + encodeURIComponent(v.key), v.name, v.children.map(navItem));
   li.dataset.name = v.name.toLowerCase();
   links.set(v.key, a);
-  // Clicking the name of the item already shown opens or closes it.
-  a.addEventListener("click", e => {
-    if (current && current.key === v.key && v.children.length) { e.preventDefault(); toggle(li); }
-  });
+  // An item with variants is a folder: its name opens and closes it.
+  if (v.children.length) a.addEventListener("click", e => { e.preventDefault(); toggle(li); });
   return li;
 }
 
@@ -232,7 +231,7 @@ function toggle(li, open) {
 function buildNav() {
   document.getElementById("title").textContent = DATA.title;
   document.title = DATA.title;
-  const count = byKey.size;
+  const count = [...byKey.values()].filter(e => !e.v.children.length).length;
   document.getElementById("sub").textContent =
     `${DATA.icds.length} ICD${DATA.icds.length === 1 ? "" : "s"} · ${count} variants · ${DATA.dialect} dialect`;
   const tree = document.getElementById("tree");
@@ -302,6 +301,7 @@ function show(key) {
     el("span", {text: (icd.label || icd.namespace || "ICD") + " · "}),
     chain.flatMap(p => [el("a", {href: "#" + encodeURIComponent(p.key), text: shortName(p)}), " / "])));
   main.append(el("h2", {text: v.name}));
+  if (v.children.length) { variantIndex(main, v); return; }
   main.append(el("div", {class: "facts"},
     el("span", {}, "size ", el("b", {text: v.size})),
     el("span", {}, "id ", el("b", {class: "mono", text: "(" + v.id + ")"})),
@@ -313,12 +313,6 @@ function show(key) {
       v.consts.map(([path, value]) => el("span", {class: "chip fixed", title: "fixed in this variant",
         text: `${path} = ${fmt(value)}`}))));
   }
-  if (v.children.length) {
-    main.append(el("h3", {text: `Variants (${v.children.length})`}));
-    main.append(el("div", {class: "kids"},
-      v.children.map(c => el("a", {href: "#" + encodeURIComponent(c.key), text: shortName(c)}))));
-  }
-
   const host = el("div");
   const draw = () => host.replaceChildren(fieldTable(v, draw));
   const containers = v.rows.filter(r => CONTAINERS.has(r.kind) && !r.hidden);
@@ -338,6 +332,26 @@ function show(key) {
   main.append(el("h3", {text: "Bit map"}));
   main.append(bitMap(v));
   main.scrollTop = 0;
+}
+
+// A message (or variant) that splits further isn't a layout of its own: list
+// its fully expanded variants instead.
+function variantIndex(main, v) {
+  const found = leaves(v);
+  main.append(el("div", {class: "facts"},
+    el("span", {}, "size ", el("b", {text: v.size})),
+    el("span", {}, "id ", el("b", {class: "mono", text: "(" + v.id + ")"}))));
+  if (v.label) main.append(el("p", {class: "doc", text: v.label}));
+  if (v.description) main.append(el("p", {class: "doc", text: v.description}));
+  main.append(el("h3", {text: `Variants (${found.length})`}));
+  main.append(el("ul", {class: "index"}, found.map(c => el("li", {},
+    el("a", {href: "#" + encodeURIComponent(c.key), text: c.name.slice(v.name.length + 1)}),
+    c.label ? el("span", {class: "note", text: " — " + c.label}) : null))));
+  main.scrollTop = 0;
+}
+
+function leaves(v) {
+  return v.children.length ? v.children.flatMap(leaves) : [v];
 }
 
 function fmt(value) {
@@ -534,6 +548,10 @@ function caption(r) {
 }
 
 function typeCell(r) {
+  if (r.link && r.kind === "union") {  // another union's cases: link to them
+    const [on, of] = r.type.split(": cases of ");
+    return [on, el("br"), "cases of ", el("a", {href: "#" + encodeURIComponent(r.link), text: of})];
+  }
   if (r.link) return el("a", {href: "#" + encodeURIComponent(r.link), text: "message " + r.link});
   if (r.values.length) {
     return el("div", {class: "map-vals", title: r.type + (r.restrict ? ", restricted" : "")},
@@ -565,7 +583,7 @@ function descCell(r) {
 function route() {
   const key = decodeURIComponent(location.hash.slice(1));
   if (byKey.has(key)) show(key);
-  else if (DATA.icds.length && DATA.icds[0].messages.length) show(DATA.icds[0].messages[0].key);
+  else if (DATA.icds.length && DATA.icds[0].messages.length) show(leaves(DATA.icds[0].messages[0])[0].key);
 }
 
 buildNav();
