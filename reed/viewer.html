@@ -4,20 +4,33 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{title}}</title>
+<script>
+try { const t = localStorage.getItem("reed-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
 <style>
+{{fonts}}
 :root {
-  --bg: #fbfbfa; --panel: #f2f1ee; --text: #1d1d1b; --muted: #6b6a66; --line: #dddbd5;
-  --accent: #2f5fb3; --accent-soft: #e3ebf8; --fixed: #8a4b0f; --fixed-soft: #f6eadb;
-  --spare: #e7e5df; --hilite: #fff3c4;
-  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+  --bg: #FFFEFA; --panel: #F4F3ED; --text: #252C2A; --muted: #5B655E; --faint: #8C948E; --line: #DEDFD8;
+  --accent: #285F51; --accent-soft: #E1ECE7; --fixed: #805B10; --fixed-soft: #F4EAD2;
+  --spare: #E9E8E1; --hilite: #FBEFC0;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
+/* Dark twice: for the system setting (unless the reader chose light), and when chosen. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #18191b; --panel: #202124; --text: #e6e4df; --muted: #9a9892; --line: #34353a;
-    --accent: #8db0f0; --accent-soft: #23314c; --fixed: #f0b878; --fixed-soft: #3d2d1b;
-    --spare: #2b2c30; --hilite: #4a3f13;
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+  --bg: #181C19; --panel: #222923; --text: #E6E9E6; --muted: #C7CEC9; --faint: #89918B; --line: #39423B;
+  --accent: #B7D7C8; --accent-soft: #2A3A33; --fixed: #E2CA8A; --fixed-soft: #3A3320;
+  --spare: #2A312B; --hilite: #4A4217;
   }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #181C19; --panel: #222923; --text: #E6E9E6; --muted: #C7CEC9; --faint: #89918B; --line: #39423B;
+  --accent: #B7D7C8; --accent-soft: #2A3A33; --fixed: #E2CA8A; --fixed-soft: #3A3320;
+  --spare: #2A312B; --hilite: #4A4217;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
@@ -39,16 +52,30 @@ nav h1 { font-size: 15px; margin: 0 4px 2px; }
 nav .sub { color: var(--muted); font-size: 12px; margin: 0 4px 10px; }
 #filter { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
   background: var(--bg); color: var(--text); font: inherit; margin-bottom: 10px; }
-.icd { margin: 10px 4px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.theme { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin: 0 0 12px; }
+.theme button { flex: 1; border: 0; background: none; color: var(--muted); font: 12px var(--sans); padding: 4px 0; cursor: pointer; }
+.theme button + button { border-left: 1px solid var(--line); }
+.theme button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .tree, .tree ul { list-style: none; margin: 0; padding: 0; }
-.tree ul { padding-left: 14px; border-left: 1px solid var(--line); margin-left: 7px; }
-.tree li > div { display: flex; align-items: center; gap: 2px; }
-.tree .tog { width: 16px; flex: none; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0; font-size: 10px; }
-.tree a { display: block; flex: 1; padding: 2px 6px; border-radius: 4px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tree a:hover { background: var(--line); text-decoration: none; }
-.tree a.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.tree ul { margin-left: 11px; padding-left: 6px; border-left: 1px solid var(--line); }
+.tree .row { display: flex; align-items: center; border-radius: 5px; }
+.tree .row:hover { background: var(--line); }
+.tree .tog { width: 22px; height: 26px; flex: none; border: 0; background: none; color: var(--muted); cursor: pointer;
+  padding: 0; display: grid; place-items: center; border-radius: 4px; }
+.tree .tog svg { width: 10px; height: 10px; transition: transform .12s; }
+.tree li:not(.shut) > .row > .tog svg { transform: rotate(90deg); }
+.tree span.tog { cursor: default; }
+.tree span.tog::before { content: ""; width: 4px; height: 4px; border-radius: 50%; background: var(--faint); }
+.tree a { display: block; flex: 1; padding: 3px 6px 3px 2px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree a:hover { text-decoration: none; }
+.tree .row.on { background: var(--accent-soft); }
+.tree .row.on a { color: var(--accent); font-weight: 600; }
 .tree li.shut > ul { display: none; }
 .tree li.hidden { display: none; }
+.tree .count { color: var(--muted); font-size: 11.5px; padding-right: 8px; }
+.tree li.icd > .row a { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+.tree li.icd { margin-top: 6px; }
+.tree li.icd > ul { border-left: 0; margin-left: 4px; padding-left: 0; }
 
 .crumbs { color: var(--muted); font-size: 12.5px; margin-bottom: 4px; }
 h2 { font-size: 22px; margin: 0 0 4px; word-break: break-word; }
@@ -109,6 +136,7 @@ col.c-bits { width: 70px; } col.c-type { width: 30%; }
   <nav>
     <h1 id="title"></h1>
     <div class="sub" id="sub"></div>
+    <div class="theme" role="group" aria-label="Colour scheme"></div>
     <input id="filter" type="search" placeholder="Filter messages…" aria-label="Filter messages">
     <div id="tree"></div>
   </nav>
@@ -143,18 +171,36 @@ DATA.icds.forEach(icd => icd.messages.forEach(m => index(m, null, icd)));
 
 // --- navigation ------------------------------------------------------------
 
-function navItem(v) {
-  const a = el("a", {href: "#" + encodeURIComponent(v.key), title: v.name, text: shortName(v)});
-  links.set(v.key, a);
-  const li = el("li", {"data-name": v.name.toLowerCase()});
-  const row = el("div", {}, v.children.length
-    ? el("button", {class: "tog", "aria-label": "expand", onclick: () => toggle(li)}, "▸")
-    : el("span", {class: "tog"}), a);
-  li.append(row);
-  if (v.children.length) {
+const CHEVRON = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3.5 1.5 L7 5 L3.5 8.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>';
+
+// A tree item: a chevron that opens and closes it (when it has children) and
+// a link that shows it. Showing an item also opens it.
+function treeItem(label, href, title, kids, cls) {
+  const li = el("li", {class: cls});
+  const a = el("a", {href, title, text: label});
+  const row = el("div", {class: "row"});
+  if (kids.length) {
+    const b = el("button", {class: "tog", "aria-expanded": "false", "aria-label": "Open " + label,
+      onclick: () => toggle(li)});
+    b.innerHTML = CHEVRON;
+    row.append(b, a, el("span", {class: "count", text: String(kids.length)}));
     li.classList.add("shut");
-    li.append(el("ul", {}, v.children.map(navItem)));
+    li.append(row, el("ul", {}, kids));
+  } else {
+    row.append(el("span", {class: "tog"}), a);
+    li.append(row);
   }
+  return {li, a};
+}
+
+function navItem(v) {
+  const {li, a} = treeItem(shortName(v), "#" + encodeURIComponent(v.key), v.name, v.children.map(navItem));
+  li.dataset.name = v.name.toLowerCase();
+  links.set(v.key, a);
+  // Clicking the name of the item already shown opens or closes it.
+  a.addEventListener("click", e => {
+    if (current && current.key === v.key && v.children.length) { e.preventDefault(); toggle(li); }
+  });
   return li;
 }
 
@@ -166,8 +212,8 @@ function shortName(v) {
 function toggle(li, open) {
   const shut = open === undefined ? !li.classList.contains("shut") : !open;
   li.classList.toggle("shut", shut);
-  const b = li.querySelector(":scope > div > .tog");
-  if (b && b.tagName === "BUTTON") b.textContent = shut ? "▸" : "▾";
+  const b = li.querySelector(":scope > .row > button.tog");
+  if (b) b.setAttribute("aria-expanded", String(!shut));
 }
 
 function buildNav() {
@@ -177,11 +223,31 @@ function buildNav() {
   document.getElementById("sub").textContent =
     `${DATA.icds.length} ICD${DATA.icds.length === 1 ? "" : "s"} · ${count} variants · ${DATA.dialect} dialect`;
   const tree = document.getElementById("tree");
-  for (const icd of DATA.icds) {
-    tree.append(el("div", {class: "icd", title: icd.namespace, text: icd.label || icd.namespace || "ICD"}));
-    tree.append(el("ul", {class: "tree"}, icd.messages.map(navItem)));
-  }
+  const icds = DATA.icds.map(icd => {
+    const label = icd.label || icd.namespace || "ICD";
+    const {li, a} = treeItem(label, "#", icd.namespace, icd.messages.map(navItem), "icd");
+    li.dataset.name = "";
+    a.addEventListener("click", e => { e.preventDefault(); toggle(li); });
+    toggle(li, true);
+    return li;
+  });
+  tree.append(el("ul", {class: "tree"}, icds));
+  themeSwitch();
   document.getElementById("filter").addEventListener("input", e => filter(e.target.value.trim().toLowerCase()));
+}
+
+function themeSwitch() {
+  const box = document.querySelector(".theme");
+  const root = document.documentElement;
+  const set = choice => {
+    if (choice === "auto") delete root.dataset.theme; else root.dataset.theme = choice;
+    try { localStorage.setItem("reed-theme", choice); } catch (e) {}
+    box.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.value === choice)));
+  };
+  for (const [value, text] of [["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]]) {
+    box.append(el("button", {type: "button", value, text, onclick: () => set(value)}));
+  }
+  set(root.dataset.theme || "auto");
 }
 
 function filter(text) {
@@ -194,15 +260,15 @@ function filter(text) {
     if (text && kidHit) toggle(li, true);
     return hit;
   };
-  document.querySelectorAll(".tree > li").forEach(visit);
+  document.querySelectorAll(".tree > li.icd > ul > li").forEach(visit);
 }
 
 function reveal(key) {
-  links.forEach(a => a.classList.remove("on"));
+  links.forEach(a => a.parentElement.classList.remove("on"));
   const a = links.get(key);
   if (!a) return;
-  a.classList.add("on");
-  for (let li = a.closest("li").parentElement.closest("li"); li; li = li.parentElement.closest("li")) toggle(li, true);
+  a.parentElement.classList.add("on");
+  for (let li = a.closest("li"); li; li = li.parentElement.closest("li")) toggle(li, true);
   a.scrollIntoView({block: "nearest"});
 }
 

@@ -21,7 +21,7 @@ reed = "reed.__main__:main"
 packages = ["reed", "reed.dialects"]
 
 [tool.setuptools.package-data]
-reed = ["viewer.html"]
+reed = ["viewer.html", "fonts/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

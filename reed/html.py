@@ -14,6 +14,7 @@ table. The page needs no server or network: open the file.
 
 from __future__ import annotations
 
+import base64
 import html
 import json
 import math
@@ -261,7 +262,35 @@ def page(icds: Mapping[str, Icd], dialect, title: str = "ICD") -> str:
     }
     blob = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
     template = resources.files("reed").joinpath("viewer.html").read_text(encoding="utf-8")
-    return template.replace("{{title}}", html.escape(title)).replace("{{data}}", blob)
+    return (
+        template.replace("{{title}}", html.escape(title))
+        .replace("{{fonts}}", font_faces())
+        .replace("{{data}}", blob)
+    )
+
+
+# IBM Plex (SIL Open Font License 1.1: reed/fonts/OFL.txt), embedded so the
+# page needs no network.
+FONTS = (
+    ("IBM Plex Sans", 400, "IBMPlexSans-Regular"),
+    ("IBM Plex Sans", 500, "IBMPlexSans-Medium"),
+    ("IBM Plex Sans", 600, "IBMPlexSans-SemiBold"),
+    ("IBM Plex Mono", 400, "IBMPlexMono-Regular"),
+    ("IBM Plex Mono", 600, "IBMPlexMono-SemiBold"),
+)
+
+
+def font_faces() -> str:
+    """@font-face rules for FONTS, with the fonts inline as data URIs."""
+    fonts = resources.files("reed").joinpath("fonts")
+    rules = []
+    for family, weight, file in FONTS:
+        data = base64.b64encode(fonts.joinpath(f"{file}.woff2").read_bytes()).decode("ascii")
+        rules.append(
+            f'@font-face {{ font-family: "{family}"; font-weight: {weight}; font-style: normal; '
+            f'font-display: swap; src: url(data:font/woff2;base64,{data}) format("woff2"); }}'
+        )
+    return "\n".join(rules)
 
 
 def _variant(variant: Variant, icds, namespace: str) -> dict:

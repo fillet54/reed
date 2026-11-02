@@ -128,6 +128,8 @@ A variant is a message with some unions resolved: each chosen union is replaced 
   - **type**: the type, or for a field with named values the value-to-name mapping, with the value fixed in this variant highlighted;
   - **description**: label, description, default.
 - `reed.html.field_rows(message, icds)` builds the rows: each field's offset, `word` and `bit_span` labels (`word_span()`: `…` for an unknown end, `—` for an unknown offset or no bits, `+` for offsets relative to an array element), size, type, named values, default, docs and fixed value. A system ID's fixed tuple is shown on its group and split over its fields. A union that wasn't split lists every case from the same offset; a carried message is one row linking to its own tree. The last word's implicit spare is a `(pad)` row.
+- The sidebar is a tree: each ICD, then each message and variant with children, opens and closes with its chevron. Clicking a name shows it and opens it; clicking the name of the item already shown closes it. Above it, an Auto / Light / Dark switch (saved in the browser's localStorage as `reed-theme`) picks the colour scheme; the palette is paper-ui's.
+- The page uses IBM Plex Sans and Mono (400, 500, 600; Mono 400, 600), embedded as data URIs so the page needs no network (about 400 KB). The fonts are in `reed/fonts/` under the SIL Open Font License 1.1 (`reed/fonts/OFL.txt`).
 - Variants and links are keyed `alias:name` (the namespace when there's no alias). The page template is `reed/viewer.html`; the data goes in as JSON.
 
 ### Codec

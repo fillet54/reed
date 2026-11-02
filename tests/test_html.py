@@ -246,6 +246,21 @@ def test_page_embeds_every_variant():
     assert command["size"] == "80–368 bits (72–368 bits used)"
 
 
+def test_page_embeds_ibm_plex_so_it_works_offline():
+    html = page(EXAMPLE.load(["tests/data/example-icd.xml"]), EXAMPLE)
+
+    faces = re.findall(r'font-family: "(IBM Plex \w+)"; font-weight: (\d+)', html)
+    assert set(faces) == {
+        ("IBM Plex Sans", "400"),
+        ("IBM Plex Sans", "500"),
+        ("IBM Plex Sans", "600"),
+        ("IBM Plex Mono", "400"),
+        ("IBM Plex Mono", "600"),
+    }
+    assert html.count("url(data:font/woff2;base64,") == 5
+    assert "{{fonts}}" not in html
+
+
 def test_page_links_carried_messages_by_key():
     icds = EXAMPLE.load(["tests/data/example-icd.xml"])
     command = embedded(page(icds, EXAMPLE))["icds"][0]["messages"][0]
